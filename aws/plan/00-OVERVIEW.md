@@ -78,6 +78,7 @@ Each part is a self-contained document with detailed steps, decisions, and ratio
 | 6    | [06-API-GATEWAY.md](./06-API-GATEWAY.md)                 | API Gateway HTTP API — routing, auth, CORS, throttling, custom domain | Parts 1, 3        |
 | 7    | [07-LAMBDAS.md](./07-LAMBDAS.md)                         | Lambda functions — business logic, validation, internal routing       | Parts 1-6         |
 | 8    | [08-NETWORKING-SECURITY.md](./08-NETWORKING-SECURITY.md) | VPC, security groups, monitoring, final hardening                     | Parts 1-7         |
+| 9    | [09-MANUAL-AWS-SETUP.md](./09-MANUAL-AWS-SETUP.md)       | Manual AWS prerequisites, one-time setup, DNS, SES, ACM               | None (reference)  |
 
 ---
 
@@ -106,7 +107,8 @@ aws/
 │   ├── 05-EMAIL-SES.md
 │   ├── 06-API-GATEWAY.md
 │   ├── 07-LAMBDAS.md
-│   └── 08-NETWORKING-SECURITY.md
+│   ├── 08-NETWORKING-SECURITY.md
+│   └── 09-MANUAL-AWS-SETUP.md
 ├── infra/                         # CDK infrastructure code
 │   ├── bin/
 │   ├── lib/
