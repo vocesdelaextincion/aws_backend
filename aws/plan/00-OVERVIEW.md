@@ -68,17 +68,18 @@ This document is the index for the full migration plan of the **Voces de la Exti
 
 Each part is a self-contained document with detailed steps, decisions, and rationale.
 
-| Part | Document                                                 | Description                                                           | Dependencies      |
-| ---- | -------------------------------------------------------- | --------------------------------------------------------------------- | ----------------- |
-| 1    | [01-IAC-GITHUB-ACTIONS.md](./01-IAC-GITHUB-ACTIONS.md)   | IaC foundation with AWS CDK + GitHub Actions CI/CD                    | None (first step) |
-| 2    | [02-DATABASE-RDS.md](./02-DATABASE-RDS.md)               | RDS PostgreSQL setup, schema migration, Prisma config                 | Part 1            |
-| 3    | [03-AUTH-COGNITO.md](./03-AUTH-COGNITO.md)               | Cognito User Pool replacing custom JWT auth                           | Part 1            |
-| 4    | [04-STORAGE-S3.md](./04-STORAGE-S3.md)                   | S3 bucket formalization with proper IAM policies                      | Part 1            |
-| 5    | [05-EMAIL-SES.md](./05-EMAIL-SES.md)                     | SES replacing Gmail OAuth 2.0                                         | Part 1            |
-| 6    | [06-API-GATEWAY.md](./06-API-GATEWAY.md)                 | API Gateway HTTP API — routing, auth, CORS, throttling, custom domain | Parts 1, 3        |
-| 7    | [07-LAMBDAS.md](./07-LAMBDAS.md)                         | Lambda functions — business logic, validation, internal routing       | Parts 1-6         |
-| 8    | [08-NETWORKING-SECURITY.md](./08-NETWORKING-SECURITY.md) | VPC, security groups, monitoring, final hardening                     | Parts 1-7         |
-| 9    | [09-MANUAL-AWS-SETUP.md](./09-MANUAL-AWS-SETUP.md)       | Manual AWS prerequisites, one-time setup, DNS, SES, ACM               | None (reference)  |
+| Part | Document                                                                                         | Description                                                           | Dependencies      |
+| ---- | ------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------- | ----------------- |
+| 1    | [01-IAC-GITHUB-ACTIONS.md](./01-IAC-GITHUB-ACTIONS.md)                                           | IaC foundation with AWS CDK + GitHub Actions CI/CD                    | None (first step) |
+| 2    | [02-DATABASE-RDS.md](./02-DATABASE-RDS.md)                                                       | RDS PostgreSQL setup, schema migration, Prisma config                 | Part 1            |
+| 3    | [03-AUTH-COGNITO.md](./03-AUTH-COGNITO.md)                                                       | Cognito User Pool replacing custom JWT auth                           | Part 1            |
+| 4    | [04-STORAGE-S3.md](./04-STORAGE-S3.md)                                                           | S3 bucket formalization with proper IAM policies                      | Part 1            |
+| 5    | [05-EMAIL-SES.md](./05-EMAIL-SES.md)                                                             | SES replacing Gmail OAuth 2.0                                         | Part 1            |
+| 6    | [06-API-GATEWAY.md](./06-API-GATEWAY.md)                                                         | API Gateway HTTP API — routing, auth, CORS, throttling, custom domain | Parts 1, 3        |
+| 7    | [07-LAMBDAS.md](./07-LAMBDAS.md)                                                                 | Lambda functions — business logic, validation, internal routing       | Parts 1-6         |
+| 8    | [08-NETWORKING-SECURITY.md](./08-NETWORKING-SECURITY.md)                                         | VPC, security groups, monitoring, final hardening                     | Parts 1-7         |
+| 9    | [09-MANUAL-AWS-SETUP.md](./09-MANUAL-AWS-SETUP.md)                                               | Manual AWS prerequisites, one-time setup, DNS, SES, ACM               | None (reference)  |
+| 10   | [10-AWS-WELL-ARCHITECTED-FRAMEWORK-ADOPTION.md](./10-AWS-WELL-ARCHITECTED-FRAMEWORK-ADOPTION.md) | Well-Architected Framework alignment checklist                        | None (reference)  |
 
 ---
 
@@ -108,7 +109,8 @@ aws/
 │   ├── 06-API-GATEWAY.md
 │   ├── 07-LAMBDAS.md
 │   ├── 08-NETWORKING-SECURITY.md
-│   └── 09-MANUAL-AWS-SETUP.md
+│   ├── 09-MANUAL-AWS-SETUP.md
+│   └── 10-AWS-WELL-ARCHITECTED-FRAMEWORK-ADOPTION.md
 ├── infra/                         # CDK infrastructure code
 │   ├── bin/
 │   ├── lib/
