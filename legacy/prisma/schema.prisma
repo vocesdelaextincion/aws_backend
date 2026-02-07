@@ -1,0 +1,54 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Plan {
+  FREE
+  PREMIUM
+}
+
+enum Role {
+  USER
+  ADMIN
+}
+
+model User {
+  id                            String    @id @default(cuid())
+  email                         String    @unique
+  password                      String
+  isVerified                    Boolean   @default(false)
+  emailVerificationToken        String?   @unique
+  emailVerificationTokenExpires DateTime? 
+  passwordResetToken          String?   @unique
+  passwordResetTokenExpires   DateTime?
+  plan                          Plan      @default(FREE)
+  role                          Role      @default(USER)
+  createdAt                     DateTime  @default(now())
+  updatedAt                     DateTime  @updatedAt
+}
+
+model Recording {
+  id          String   @id @default(cuid())
+  title       String
+  description String?
+  fileUrl     String   @unique
+  fileKey     String   @unique // To manage the object in the storage provider
+  metadata    Json?
+  tags        Tag[]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model Tag {
+  id         String      @id @default(cuid())
+  name       String      @unique
+  recordings Recording[]
+}
