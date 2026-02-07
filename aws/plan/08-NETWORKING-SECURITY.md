@@ -20,7 +20,7 @@ VPC: voces-{env}-vpc (CIDR: 10.0.0.0/16)
 ├── Public Subnets (2 AZs)
 │   ├── 10.0.1.0/24 (AZ-a)
 │   └── 10.0.2.0/24 (AZ-b)
-│   └── NAT Gateway (one per AZ in prod, one shared in dev)
+│   └── fck-nat instance (dev) / NAT Gateway (one per AZ in prod)
 │
 ├── Private Subnets — Application (2 AZs)
 │   ├── 10.0.10.0/24 (AZ-a)
@@ -30,27 +30,27 @@ VPC: voces-{env}-vpc (CIDR: 10.0.0.0/16)
 └── Private Subnets — Database (2 AZs)
     ├── 10.0.100.0/24 (AZ-a)
     └── 10.0.200.0/24 (AZ-b)
-    └── RDS Aurora cluster runs here
+    └── RDS instance (dev) / Aurora cluster (prod) runs here
 ```
 
 ### Subnet Purposes
 
-| Subnet Type   | Contains                              | Internet Access                 |
-| ------------- | ------------------------------------- | ------------------------------- |
-| Public        | NAT Gateway, (Bastion host if needed) | Direct (Internet Gateway)       |
-| Private — App | Lambda functions                      | Outbound only (via NAT Gateway) |
-| Private — DB  | RDS Aurora, RDS Proxy                 | None                            |
+| Subnet Type   | Contains                                       | Internet Access                           |
+| ------------- | ---------------------------------------------- | ----------------------------------------- |
+| Public        | fck-nat instance (dev) / NAT Gateway (prod)    | Direct (Internet Gateway)                 |
+| Private — App | Lambda functions                               | Outbound only (via fck-nat / NAT Gateway) |
+| Private — DB  | RDS instance (dev) / Aurora + RDS Proxy (prod) | None                                      |
 
 ### Why Lambda needs outbound internet (NAT Gateway)
 
-Lambda functions in a VPC have **no internet access** by default. They need NAT Gateway to reach:
+Lambda functions in a VPC have **no internet access** by default. They need a NAT device to reach:
 
 - AWS Cognito APIs (sign up, auth)
 - AWS SES APIs (if sending custom emails)
 - AWS Secrets Manager / SSM (to fetch secrets)
 - Any external service
 
-**Alternative**: Use **VPC Endpoints** for AWS services to avoid NAT Gateway costs:
+**Alternative**: Use **VPC Endpoints** for AWS services to reduce NAT traffic:
 
 | Service             | VPC Endpoint Type         | Eliminates NAT for      |
 | ------------------- | ------------------------- | ----------------------- |
@@ -60,18 +60,21 @@ Lambda functions in a VPC have **no internet access** by default. They need NAT 
 | SES                 | Interface                 | Sending emails          |
 | Cognito             | Not available (needs NAT) | —                       |
 
-**Recommendation**: Use S3 Gateway Endpoint (free) + NAT Gateway for everything else. Add interface endpoints later to reduce NAT costs if they become significant.
+**Recommendation**: Use S3 Gateway Endpoint (free) + NAT device for everything else. Add interface endpoints in prod to reduce NAT data transfer costs if they become significant.
 
-### NAT Gateway Cost Consideration
+### NAT Device Strategy: fck-nat (Dev) vs NAT Gateway (Prod)
 
-NAT Gateway costs ~$32/month (fixed) + data transfer. For dev:
+NAT Gateway costs ~$32/month (fixed) + data transfer — too expensive for a non-professional project.
 
-- Consider a **single NAT Gateway** (not HA) to save costs
-- Or use **NAT Instance** (t3.nano ~$3/month) for dev
+**For dev**: Use **[fck-nat](https://fck-nat.dev/)** — a community-maintained, purpose-built NAT instance AMI:
 
-For prod:
+- Runs on a `t4g.nano` (~$3/month)
+- ARM64 (Graviton2), optimized for NAT workloads
+- Supports high availability via auto-scaling group (optional)
+- Battle-tested, widely used in the AWS community
+- Saves ~$29/month vs NAT Gateway
 
-- One NAT Gateway per AZ for high availability
+**For prod**: Use **NAT Gateway** (one per AZ) for managed high availability and throughput.
 
 ---
 
@@ -89,30 +92,38 @@ Configuration:
   - Public (for NAT Gateway)
   - Private with egress (for Lambda — routes through NAT)
   - Private isolated (for RDS — no internet)
-- NAT Gateways: 1 (dev) / 2 (prod)
+- NAT: fck-nat t4g.nano (dev) / 2 NAT Gateways (prod)
 ```
 
-CDK's `Vpc` construct handles most of this automatically:
+For prod, CDK's `Vpc` construct handles NAT Gateways automatically. For dev, we use fck-nat:
 
 ```typescript
-new ec2.Vpc(this, "VocesVpc", {
+// Prod: managed NAT Gateways
+const vpc = new ec2.Vpc(this, "VocesVpc", {
   maxAzs: 2,
-  natGateways: isProd ? 2 : 1,
+  natGateways: isProd ? 2 : 0, // 0 for dev — we add fck-nat manually
   subnetConfiguration: [
     { name: "Public", subnetType: ec2.SubnetType.PUBLIC },
     { name: "Application", subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
     { name: "Database", subnetType: ec2.SubnetType.PRIVATE_ISOLATED },
   ],
 });
+
+// Dev: fck-nat instance (CDK construct available via cdk-fck-nat package)
+// See: https://github.com/AndrewGuenther/cdk-fck-nat
+if (!isProd) {
+  // fck-nat provides a CDK construct that creates a t4g.nano NAT instance
+  // and configures route tables automatically
+}
 ```
 
 ### 2. Security Groups
 
-| Security Group             | Inbound Rules                            | Outbound Rules                             | Used By              |
-| -------------------------- | ---------------------------------------- | ------------------------------------------ | -------------------- |
-| `voces-{env}-lambda-sg`    | None (Lambda initiates, doesn't receive) | All traffic (needed for NAT/VPC endpoints) | All Lambda functions |
-| `voces-{env}-rds-sg`       | TCP 5432 from `lambda-sg`                | None                                       | RDS Aurora cluster   |
-| `voces-{env}-rds-proxy-sg` | TCP 5432 from `lambda-sg`                | TCP 5432 to `rds-sg`                       | RDS Proxy            |
+| Security Group             | Inbound Rules                            | Outbound Rules                             | Used By                       |
+| -------------------------- | ---------------------------------------- | ------------------------------------------ | ----------------------------- |
+| `voces-{env}-lambda-sg`    | None (Lambda initiates, doesn't receive) | All traffic (needed for NAT/VPC endpoints) | All Lambda functions          |
+| `voces-{env}-rds-sg`       | TCP 5432 from `lambda-sg`                | None                                       | RDS instance / Aurora cluster |
+| `voces-{env}-rds-proxy-sg` | TCP 5432 from `lambda-sg`                | TCP 5432 to `rds-sg`                       | RDS Proxy (prod only)         |
 
 ### 3. VPC Endpoints
 
@@ -188,8 +199,8 @@ No wildcard `*` resource permissions.
 
 ### Why Secrets Manager for DB credentials?
 
-- Automatic rotation support
-- RDS Proxy integrates natively with Secrets Manager
+- Automatic rotation support (prod)
+- RDS Proxy integrates natively with Secrets Manager (prod)
 - Structured secret (JSON with host, port, user, password, dbname)
 
 ### Why SSM Parameter Store for non-sensitive config?
@@ -363,17 +374,17 @@ This is optional for initial deployment — the default API Gateway URL works fi
 
 ## Environment-Specific Configuration Summary
 
-| Parameter         | Dev             | Prod                               |
-| ----------------- | --------------- | ---------------------------------- |
-| NAT Gateways      | 1               | 2 (HA)                             |
-| VPC Endpoints     | S3 Gateway only | S3 Gateway + Secrets Manager + SSM |
-| Log retention     | 14 days         | 90 days                            |
-| CloudWatch alarms | Minimal         | Full suite                         |
-| Dashboard         | None            | Yes                                |
-| Custom domain     | No              | Yes                                |
-| X-Ray tracing     | Off             | On                                 |
-| Rate limiting     | 100 burst       | 1000 burst                         |
-| WAF               | Off             | Consider (future)                  |
+| Parameter         | Dev              | Prod                               |
+| ----------------- | ---------------- | ---------------------------------- |
+| NAT device        | fck-nat t4g.nano | 2 NAT Gateways (HA)                |
+| VPC Endpoints     | S3 Gateway only  | S3 Gateway + Secrets Manager + SSM |
+| Log retention     | 14 days          | 90 days                            |
+| CloudWatch alarms | Minimal          | Full suite                         |
+| Dashboard         | None             | Yes                                |
+| Custom domain     | No               | Yes                                |
+| X-Ray tracing     | Off              | On                                 |
+| Rate limiting     | 100 burst        | 1000 burst                         |
+| WAF               | Off              | Consider (future)                  |
 
 ---
 
@@ -383,7 +394,7 @@ When deploying all stacks together, the order matters due to dependencies:
 
 ```
 1. network-stack       (VPC, subnets, security groups)
-2. database-stack      (RDS Aurora, RDS Proxy — needs VPC)
+2. database-stack      (RDS instance/Aurora, RDS Proxy in prod — needs VPC)
 3. auth-stack          (Cognito User Pool — independent but logical order)
 4. storage-stack       (S3 bucket — independent)
 5. email-stack         (SES identity — independent)
@@ -397,24 +408,30 @@ CDK handles this automatically if you declare dependencies between stacks.
 
 ## Cost Estimate (Monthly, Dev Environment)
 
-| Service                                | Estimated Cost                     |
-| -------------------------------------- | ---------------------------------- |
-| Lambda (low traffic)                   | ~$0 (free tier: 1M requests/month) |
-| API Gateway                            | ~$0 (free tier: 1M requests/month) |
-| RDS Aurora Serverless v2 (0.5 ACU min) | ~$44/month                         |
-| RDS Proxy                              | ~$22/month                         |
-| NAT Gateway (1)                        | ~$32/month + data transfer         |
-| S3 (small storage)                     | ~$1/month                          |
-| Secrets Manager (1 secret)             | ~$0.40/month                       |
-| CloudWatch Logs                        | ~$1/month                          |
-| SES (low volume)                       | ~$0                                |
-| **Total (Dev)**                        | **~$100/month**                    |
+| Service                    | Estimated Cost (free tier) | Estimated Cost (after 12 months) |
+| -------------------------- | -------------------------- | -------------------------------- |
+| Lambda (low traffic)       | ~$0                        | ~$0                              |
+| API Gateway (low traffic)  | ~$0                        | ~$0                              |
+| RDS db.t4g.micro           | **~$0** (free tier)        | ~$12/month                       |
+| fck-nat (t4g.nano)         | ~$3/month                  | ~$3/month                        |
+| S3 (small storage)         | ~$1/month                  | ~$1/month                        |
+| Secrets Manager (1 secret) | ~$0.40/month               | ~$0.40/month                     |
+| CloudWatch Logs            | ~$1/month                  | ~$1/month                        |
+| SES (low volume)           | ~$0                        | ~$0                              |
+| **Total (Dev)**            | **~$5/month**              | **~$17/month**                   |
 
-### Cost Optimization Options for Dev
+### What changed from the original estimate (~$100/month)
 
-- Use **NAT Instance** (t3.nano) instead of NAT Gateway: saves ~$29/month
-- Use **RDS t3.micro** instead of Aurora Serverless: saves ~$20/month but loses auto-scaling
-- Shut down dev environment outside business hours via scheduled CDK destroy/deploy
+| Change                              | Savings        |
+| ----------------------------------- | -------------- |
+| Aurora Serverless v2 → db.t4g.micro | -$44/month     |
+| NAT Gateway → fck-nat (t4g.nano)    | -$29/month     |
+| RDS Proxy removed (dev only)        | -$22/month     |
+| **Total savings**                   | **-$95/month** |
+
+### Budget constraint
+
+This is a non-professional project with a **maximum budget of $15/month**. The dev environment must stay within this limit. Cost-intensive features (Aurora Serverless v2, RDS Proxy, NAT Gateway, provisioned concurrency) are reserved for prod only.
 
 ---
 
@@ -422,20 +439,20 @@ CDK handles this automatically if you declare dependencies between stacks.
 
 | Risk                                              | Mitigation                                                                      |
 | ------------------------------------------------- | ------------------------------------------------------------------------------- |
-| NAT Gateway is a single point of failure (dev)    | Acceptable for dev; prod uses 2 NAT Gateways                                    |
+| fck-nat instance failure (dev)                    | Acceptable for dev; auto-restart via ASG; prod uses managed NAT Gateways        |
 | VPC adds cold start latency to Lambda             | Provisioned concurrency for critical paths; VPC endpoints reduce external calls |
 | CloudWatch costs grow with log volume             | Set retention policies; use log level filtering                                 |
 | Security group misconfiguration blocks Lambda→RDS | CDK manages SG rules declaratively; test connectivity in CI                     |
 | IAM too restrictive breaks functionality          | Start with broader permissions in dev; tighten for prod                         |
-| Cost overruns                                     | Set AWS Budget alerts at $100 (dev) and $500 (prod)                             |
+| Cost overruns                                     | Set AWS Budget alerts at $15 (dev) and $500 (prod)                              |
 
 ---
 
 ## Definition of Done
 
 - [ ] VPC deployed with correct subnet topology
-- [ ] Security groups allow Lambda → RDS Proxy → RDS traffic
-- [ ] NAT Gateway provides outbound internet for Lambda
+- [ ] Security groups allow Lambda → RDS traffic (dev) / Lambda → RDS Proxy → RDS (prod)
+- [ ] fck-nat instance provides outbound internet for Lambda (dev) / NAT Gateway (prod)
 - [ ] S3 Gateway VPC Endpoint configured
 - [ ] All Lambda IAM roles follow least privilege
 - [ ] Secrets stored in Secrets Manager / SSM Parameter Store

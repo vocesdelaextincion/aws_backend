@@ -374,51 +374,50 @@ Each Lambda function is bundled with **esbuild** (fast, tree-shakes, handles Typ
 
 ## Cold Start Optimization
 
-| Technique                     | Impact                                                                          |
-| ----------------------------- | ------------------------------------------------------------------------------- |
-| arm64 (Graviton2)             | ~20% faster cold starts vs x86                                                  |
-| 256MB+ memory                 | More memory = more CPU = faster init                                            |
-| Prisma in Lambda Layer        | Layer is cached across deployments                                              |
-| Prisma client outside handler | Reused across warm invocations                                                  |
-| VPC with NAT Gateway          | Adds ~2-5s cold start; mitigate with Provisioned Concurrency for critical paths |
-| esbuild tree-shaking          | Smaller bundles = faster load                                                   |
+| Technique                     | Impact                                                                         |
+| ----------------------------- | ------------------------------------------------------------------------------ |
+| arm64 (Graviton2)             | ~20% faster cold starts vs x86                                                 |
+| 256MB+ memory                 | More memory = more CPU = faster init                                           |
+| Prisma in Lambda Layer        | Layer is cached across deployments                                             |
+| Prisma client outside handler | Reused across warm invocations                                                 |
+| VPC with NAT (fck-nat / GW)   | Adds ~2-5s cold start; mitigate with Provisioned Concurrency in prod if needed |
+| esbuild tree-shaking          | Smaller bundles = faster load                                                  |
 
-### Provisioned Concurrency (Optional, Prod)
+### Provisioned Concurrency (Future, Prod Only)
 
-For latency-sensitive endpoints (e.g., `/auth/login`, `/recordings`), configure provisioned concurrency to keep a minimum number of warm instances:
+For latency-sensitive endpoints (e.g., `/auth/login`, `/recordings`), provisioned concurrency keeps warm instances ready:
 
 ```
-
 voces-prod-auth: 2 provisioned instances
 voces-prod-recordings: 2 provisioned instances
-
 ```
 
-This eliminates cold starts for the most-used endpoints. Cost: ~$15/month per provisioned instance.
+Cost: ~$15/month per provisioned instance (~$60/month total). **Do not enable until actual cold start frequency and impact are measured post-launch.** This is a prod-only optimization that exceeds the dev budget on its own.
 
 ---
 
 ## Environment-Specific Configuration
 
-| Parameter               | Dev    | Prod                           |
-| ----------------------- | ------ | ------------------------------ |
-| Memory                  | 256 MB | 512 MB (tune based on metrics) |
-| Timeout                 | 30 sec | 30 sec                         |
-| Provisioned concurrency | 0      | 2 (for auth + recordings)      |
-| Logging level           | DEBUG  | INFO                           |
-| X-Ray tracing           | Off    | On                             |
+| Parameter               | Dev           | Prod                                         |
+| ----------------------- | ------------- | -------------------------------------------- |
+| Memory                  | 256 MB        | 512 MB (tune based on metrics)               |
+| Timeout                 | 30 sec        | 30 sec                                       |
+| Provisioned concurrency | 0             | 0 (enable later if cold starts are an issue) |
+| Logging level           | DEBUG         | INFO                                         |
+| X-Ray tracing           | Off           | On                                           |
+| DB connection           | Direct to RDS | Via RDS Proxy                                |
 
 ---
 
 ## Risks and Mitigations
 
-| Risk                          | Mitigation                                                                |
-| ----------------------------- | ------------------------------------------------------------------------- |
-| VPC Lambda cold starts (2-5s) | Provisioned concurrency for critical paths; consider VPC-less for metrics |
-| Multipart parsing in Lambda   | Use `busboy` or `lambda-multipart-parser`; well-tested libraries          |
-| express-validator removal     | Replace with Zod; same validation rules, different syntax                 |
-| Many Lambdas to manage        | One-per-group keeps it to 6-8 functions; CDK abstracts deployment         |
-| Prisma binary size            | Lambda Layer caches it; doesn't count against function size limit         |
+| Risk                          | Mitigation                                                                    |
+| ----------------------------- | ----------------------------------------------------------------------------- |
+| VPC Lambda cold starts (2-5s) | Measure post-launch; enable provisioned concurrency in prod only if justified |
+| Multipart parsing in Lambda   | Use `busboy` or `lambda-multipart-parser`; well-tested libraries              |
+| express-validator removal     | Replace with Zod; same validation rules, different syntax                     |
+| Many Lambdas to manage        | One-per-group keeps it to 6-8 functions; CDK abstracts deployment             |
+| Prisma binary size            | Lambda Layer caches it; doesn't count against function size limit             |
 
 ---
 

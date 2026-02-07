@@ -33,27 +33,34 @@ Implicit many-to-many: Recording <-> Tag (Prisma manages the join table `_Record
 
 ## Target State
 
-| Aspect             | Decision                                                                |
-| ------------------ | ----------------------------------------------------------------------- |
-| Engine             | PostgreSQL 16 (latest stable on RDS)                                    |
-| Instance type      | **RDS Aurora Serverless v2** (scales to zero in dev, scales up in prod) |
-| Networking         | Inside a VPC, private subnets only (no public access)                   |
-| Access             | Lambda functions connect via VPC; no internet-facing DB endpoint        |
-| Connection pooling | **RDS Proxy** to handle Lambda connection bursts                        |
-| ORM                | Prisma (same as legacy, with Lambda-specific config)                    |
-| Migrations         | Run via a dedicated CI/CD step or a one-off Lambda                      |
-| Secrets            | Database credentials in AWS Secrets Manager (auto-rotated)              |
+| Aspect             | Decision                                                                                        |
+| ------------------ | ----------------------------------------------------------------------------------------------- |
+| Engine             | PostgreSQL 16 (latest stable on RDS)                                                            |
+| Instance type      | **RDS db.t4g.micro** (dev — free tier eligible) / **Aurora Serverless v2** (prod — auto-scales) |
+| Networking         | Inside a VPC, private subnets only (no public access)                                           |
+| Access             | Lambda functions connect via VPC; no internet-facing DB endpoint                                |
+| Connection pooling | **Direct connections** (dev) / **RDS Proxy** (prod only)                                        |
+| ORM                | Prisma (same as legacy, with Lambda-specific config)                                            |
+| Migrations         | Run via a dedicated CI/CD step or a one-off Lambda                                              |
+| Secrets            | Database credentials in AWS Secrets Manager                                                     |
 
-### Why Aurora Serverless v2?
+### Why db.t4g.micro for Dev?
 
-- **Cost**: Scales to near-zero ACUs in dev when idle. No paying for an always-on instance during development.
-- **Scaling**: Automatically scales compute based on load in prod.
-- **Compatibility**: Full PostgreSQL compatibility — Prisma works unchanged.
-- **Managed**: Automated backups, patching, failover.
+- **Cost**: Free tier eligible — 750 hours/month free for 12 months. After free tier: ~$12/month.
+- **ARM64 (Graviton2)**: Same architecture as our Lambda functions — cheaper than x86 equivalents.
+- **Sufficient for dev**: 2 vCPUs, 1 GB RAM — more than enough for development and testing.
+- **Compatibility**: Standard RDS PostgreSQL — Prisma works unchanged.
+- **Managed**: Automated backups, patching, same as any RDS instance.
 
-### Why RDS Proxy?
+### Why Aurora Serverless v2 for Prod?
 
-Lambda functions are ephemeral. Each invocation may open a new database connection. Without pooling, you can exhaust the DB connection limit quickly.
+- **Scaling**: Automatically scales compute based on load.
+- **High availability**: Multi-AZ with fast failover.
+- **Compatibility**: Full PostgreSQL compatibility.
+
+### Why RDS Proxy in Prod Only?
+
+Lambda functions are ephemeral. Each invocation may open a new database connection. In production with concurrent users, this can exhaust the DB connection limit.
 
 RDS Proxy:
 
@@ -62,25 +69,28 @@ RDS Proxy:
 - Integrates with Secrets Manager for credential rotation
 - Adds ~1ms latency (negligible)
 
+**In dev**, traffic is low enough that direct Lambda-to-RDS connections with `connection_limit=1` per Lambda instance work fine. The db.t4g.micro supports ~80 connections — far more than dev will ever need. This saves ~$22/month.
+
 ---
 
 ## CDK Stack Design
 
 The `database-stack.ts` will create:
 
-1. **Aurora Serverless v2 Cluster** (PostgreSQL 16)
-   - Minimum ACU: 0.5 (dev) / 2 (prod)
-   - Maximum ACU: 2 (dev) / 16 (prod)
+1. **RDS PostgreSQL Instance** (dev) or **Aurora Serverless v2 Cluster** (prod)
+   - **Dev**: db.t4g.micro, PostgreSQL 16, single-AZ, 20 GB gp3 storage
+   - **Prod**: Aurora Serverless v2, min 2 ACU / max 16 ACU, multi-AZ
    - Private subnets only
    - Encryption at rest (default KMS key)
    - Automated backups: 7 days (dev) / 35 days (prod)
    - Deletion protection: off (dev) / on (prod)
 
-2. **RDS Proxy**
+2. **RDS Proxy** (prod only)
    - Attached to the Aurora cluster
    - IAM authentication enabled
    - Secrets Manager integration for credentials
    - Idle timeout: 30 minutes
+   - Not created in dev (direct connections instead)
 
 3. **Security Group**
    - Inbound: PostgreSQL port (5432) from Lambda security group only
@@ -88,11 +98,11 @@ The `database-stack.ts` will create:
 
 4. **Secrets Manager Secret**
    - Auto-generated master credentials
-   - Rotation enabled (30-day cycle in prod)
+   - Rotation enabled (30-day cycle in prod), off in dev
 
 ### Stack Outputs (exported for other stacks)
 
-- `DatabaseProxyEndpoint` — The RDS Proxy endpoint URL
+- `DatabaseEndpoint` — The RDS instance endpoint (dev) or RDS Proxy endpoint (prod)
 - `DatabaseSecretArn` — ARN of the Secrets Manager secret
 - `DatabaseSecurityGroupId` — SG ID for Lambda to reference
 - `DatabaseName` — The database name
@@ -147,10 +157,12 @@ generator client {
 The connection string will be constructed at runtime from Secrets Manager:
 
 ```
-postgresql://<username>:<password>@<rds-proxy-endpoint>:5432/<dbname>?connection_limit=1
+postgresql://<username>:<password>@<db-endpoint>:5432/<dbname>?connection_limit=1&sslmode=require
 ```
 
-Key: `connection_limit=1` — Each Lambda instance should use only 1 connection since RDS Proxy handles pooling.
+- `connection_limit=1` — Each Lambda instance should use only 1 connection. In prod, RDS Proxy handles pooling. In dev, the db.t4g.micro supports ~80 connections which is more than sufficient.
+- `sslmode=require` — Enforces encrypted connections between Lambda and RDS (see Well-Architected Framework adoption plan).
+- `<db-endpoint>` — Points to the RDS Proxy endpoint in prod, or directly to the RDS instance endpoint in dev.
 
 ### 3. Prisma Client Instantiation
 
@@ -184,35 +196,38 @@ The Prisma engine binary (~40MB) should be packaged as a **Lambda Layer** shared
 
 ## Environment-Specific Configuration
 
-| Parameter           | Dev    | Prod    |
-| ------------------- | ------ | ------- |
-| Min ACU             | 0.5    | 2       |
-| Max ACU             | 2      | 16      |
-| Backup retention    | 7 days | 35 days |
-| Deletion protection | Off    | On      |
-| Multi-AZ            | No     | Yes     |
-| Proxy idle timeout  | 15 min | 30 min  |
-| Secret rotation     | Off    | 30 days |
+| Parameter           | Dev                                      | Prod                                |
+| ------------------- | ---------------------------------------- | ----------------------------------- |
+| Instance type       | db.t4g.micro (free tier)                 | Aurora Serverless v2 (2-16 ACU)     |
+| Storage             | 20 GB gp3                                | Aurora-managed                      |
+| Backup retention    | 7 days                                   | 35 days                             |
+| Deletion protection | Off                                      | On                                  |
+| Multi-AZ            | No                                       | Yes                                 |
+| RDS Proxy           | No (direct connections)                  | Yes (idle timeout: 30 min)          |
+| Secret rotation     | Off                                      | 30 days                             |
+| Estimated cost      | ~$0 (free tier) / ~$12 (after 12 months) | ~$44 (Aurora) + ~$22 (Proxy) = ~$66 |
 
 ---
 
 ## Risks and Mitigations
 
-| Risk                                           | Mitigation                                                                  |
-| ---------------------------------------------- | --------------------------------------------------------------------------- |
-| Lambda cold start + DB connection latency      | RDS Proxy pre-warms connections; Prisma client reuse                        |
-| Connection exhaustion                          | RDS Proxy pools connections; `connection_limit=1` per Lambda                |
-| Prisma engine size bloats Lambda               | Use Lambda Layer for Prisma engine                                          |
-| Migration failures in CI/CD                    | Run `prisma migrate deploy` (safe, never auto-generates); test in dev first |
-| Aurora Serverless v2 cold start (scale from 0) | Set minimum ACU to 0.5 (not true zero) to keep cluster warm                 |
+| Risk                                      | Mitigation                                                                                  |
+| ----------------------------------------- | ------------------------------------------------------------------------------------------- |
+| Lambda cold start + DB connection latency | Prisma client reuse across warm invocations; RDS Proxy in prod pre-warms connections        |
+| Connection exhaustion in dev (no Proxy)   | `connection_limit=1` per Lambda + db.t4g.micro supports ~80 connections; dev traffic is low |
+| Connection exhaustion in prod             | RDS Proxy pools connections; `connection_limit=1` per Lambda                                |
+| Prisma engine size bloats Lambda          | Use Lambda Layer for Prisma engine                                                          |
+| Migration failures in CI/CD               | Run `prisma migrate deploy` (safe, never auto-generates); test in dev first                 |
+| Dev/prod DB engine mismatch               | Both are standard PostgreSQL 16; Prisma abstracts engine differences                        |
 
 ---
 
 ## Definition of Done
 
-- [ ] Aurora Serverless v2 cluster deployed via CDK in dev
-- [ ] RDS Proxy configured and accessible from Lambda security group
+- [ ] RDS db.t4g.micro instance deployed via CDK in dev
 - [ ] Database credentials stored in Secrets Manager
+- [ ] SSL/TLS enforced on database connections (`sslmode=require`)
 - [ ] Prisma schema deployed to RDS via CI/CD migration step
-- [ ] A test Lambda can connect through RDS Proxy and query the database
-- [ ] Connection pooling verified (no connection leaks under concurrent invocations)
+- [ ] A test Lambda can connect directly to RDS and query the database
+- [ ] No connection leaks under concurrent invocations (`connection_limit=1` verified)
+- [ ] (Prod) Aurora Serverless v2 cluster + RDS Proxy configured and accessible

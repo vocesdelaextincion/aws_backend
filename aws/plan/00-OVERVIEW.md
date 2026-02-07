@@ -47,20 +47,20 @@ This document is the index for the full migration plan of the **Voces de la Exti
 
 ## Target Architecture (AWS)
 
-| Component    | AWS Service                               | Replaces            |
-| ------------ | ----------------------------------------- | ------------------- |
-| Compute      | AWS Lambda                                | Express.js server   |
-| API Layer    | API Gateway (HTTP API)                    | Express router      |
-| Database     | RDS PostgreSQL (Serverless v2)            | Local PostgreSQL    |
-| ORM          | Prisma (Lambda layer)                     | Prisma (same)       |
-| Auth         | AWS Cognito                               | Custom JWT + bcrypt |
-| File Storage | S3                                        | S3 (already there)  |
-| Email        | AWS SES                                   | Gmail OAuth 2.0     |
-| Secrets      | AWS Secrets Manager / SSM Parameter Store | .env file           |
-| IaC          | AWS CDK (TypeScript)                      | None                |
-| CI/CD        | GitHub Actions                            | None                |
-| Monitoring   | CloudWatch                                | Console logs        |
-| Networking   | VPC + Subnets                             | None                |
+| Component    | AWS Service                                                   | Replaces            |
+| ------------ | ------------------------------------------------------------- | ------------------- |
+| Compute      | AWS Lambda                                                    | Express.js server   |
+| API Layer    | API Gateway (HTTP API)                                        | Express router      |
+| Database     | RDS PostgreSQL (db.t4g.micro dev / Aurora Serverless v2 prod) | Local PostgreSQL    |
+| ORM          | Prisma (Lambda layer)                                         | Prisma (same)       |
+| Auth         | AWS Cognito                                                   | Custom JWT + bcrypt |
+| File Storage | S3                                                            | S3 (already there)  |
+| Email        | AWS SES                                                       | Gmail OAuth 2.0     |
+| Secrets      | AWS Secrets Manager / SSM Parameter Store                     | .env file           |
+| IaC          | AWS CDK (TypeScript)                                          | None                |
+| CI/CD        | GitHub Actions                                                | None                |
+| Monitoring   | CloudWatch                                                    | Console logs        |
+| Networking   | VPC + Subnets                                                 | None                |
 
 ---
 
