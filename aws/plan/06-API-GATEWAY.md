@@ -321,7 +321,7 @@ Per-route throttling requires REST API or a Lambda-based rate limiter. For HTTP 
 
 5. Lambda processes request
    → Internal routing: GET /recordings → getRecordings()
-   → Query RDS via Prisma
+   → Query DynamoDB via AWS SDK
    → Return response object
 
 6. API Gateway returns response

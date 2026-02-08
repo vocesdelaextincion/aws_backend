@@ -47,20 +47,20 @@ This document is the index for the full migration plan of the **Voces de la Exti
 
 ## Target Architecture (AWS)
 
-| Component    | AWS Service                                                   | Replaces            |
-| ------------ | ------------------------------------------------------------- | ------------------- |
-| Compute      | AWS Lambda                                                    | Express.js server   |
-| API Layer    | API Gateway (HTTP API)                                        | Express router      |
-| Database     | RDS PostgreSQL (db.t4g.micro dev / Aurora Serverless v2 prod) | Local PostgreSQL    |
-| ORM          | Prisma (Lambda layer)                                         | Prisma (same)       |
-| Auth         | AWS Cognito                                                   | Custom JWT + bcrypt |
-| File Storage | S3                                                            | S3 (already there)  |
-| Email        | AWS SES                                                       | Gmail OAuth 2.0     |
-| Secrets      | AWS Secrets Manager / SSM Parameter Store                     | .env file           |
-| IaC          | AWS CDK (TypeScript)                                          | None                |
-| CI/CD        | GitHub Actions                                                | None                |
-| Monitoring   | CloudWatch                                                    | Console logs        |
-| Networking   | VPC + Subnets                                                 | None                |
+| Component    | AWS Service                               | Replaces            |
+| ------------ | ----------------------------------------- | ------------------- |
+| Compute      | AWS Lambda                                | Express.js server   |
+| API Layer    | API Gateway (HTTP API)                    | Express router      |
+| Database     | DynamoDB (on-demand, single-table design) | Local PostgreSQL    |
+| Data access  | AWS SDK v3 `@aws-sdk/lib-dynamodb`        | Prisma              |
+| Auth         | AWS Cognito                               | Custom JWT + bcrypt |
+| File Storage | S3                                        | S3 (already there)  |
+| Email        | AWS SES                                   | Gmail OAuth 2.0     |
+| Secrets      | AWS Secrets Manager / SSM Parameter Store | .env file           |
+| IaC          | AWS CDK (TypeScript)                      | None                |
+| CI/CD        | GitHub Actions                            | None                |
+| Monitoring   | CloudWatch                                | Console logs        |
+| Networking   | VPC + Subnets (Cognito/SES NAT only)      | None                |
 
 ---
 
@@ -71,7 +71,7 @@ Each part is a self-contained document with detailed steps, decisions, and ratio
 | Part | Document                                                                                         | Description                                                           | Dependencies      |
 | ---- | ------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------- | ----------------- |
 | 1    | [01-IAC-GITHUB-ACTIONS.md](./01-IAC-GITHUB-ACTIONS.md)                                           | IaC foundation with AWS CDK + GitHub Actions CI/CD                    | None (first step) |
-| 2    | [02-DATABASE-RDS.md](./02-DATABASE-RDS.md)                                                       | RDS PostgreSQL setup, schema migration, Prisma config                 | Part 1            |
+| 2    | [02-DATABASE-DYNAMODB.md](./02-DATABASE-DYNAMODB.md)                                             | DynamoDB table, single-table design, access patterns, SDK config      | Part 1            |
 | 3    | [03-AUTH-COGNITO.md](./03-AUTH-COGNITO.md)                                                       | Cognito User Pool replacing custom JWT auth                           | Part 1            |
 | 4    | [04-STORAGE-S3.md](./04-STORAGE-S3.md)                                                           | S3 bucket formalization with proper IAM policies                      | Part 1            |
 | 5    | [05-EMAIL-SES.md](./05-EMAIL-SES.md)                                                             | SES replacing Gmail OAuth 2.0                                         | Part 1            |
@@ -102,7 +102,7 @@ aws/
 ├── plan/                          # Migration plan documents (this folder)
 │   ├── 00-OVERVIEW.md
 │   ├── 01-IAC-GITHUB-ACTIONS.md
-│   ├── 02-DATABASE-RDS.md
+│   ├── 02-DATABASE-DYNAMODB.md
 │   ├── 03-AUTH-COGNITO.md
 │   ├── 04-STORAGE-S3.md
 │   ├── 05-EMAIL-SES.md
@@ -125,14 +125,12 @@ aws/
 │   ├── tags/
 │   ├── admin/
 │   ├── metrics/
-│   ├── shared/                    # Shared utilities (prisma, response helpers)
-│   └── layers/                    # Lambda layers (prisma engine, etc.)
+│   ├── shared/                    # Shared utilities (db client, response helpers)
+│   └── layers/                    # Lambda layers (if needed)
 ├── .github/
 │   └── workflows/
 │       ├── deploy-infra.yml
 │       ├── deploy-lambdas.yml
 │       └── ci.yml
-└── prisma/
-    ├── schema.prisma
-    └── migrations/
+└── scripts/                       # Utility scripts (seed data, etc.)
 ```

@@ -10,16 +10,16 @@ Document every action that must be performed **manually** in the AWS Console (or
 
 The entire migration is designed to be IaC-first, but some things require manual intervention:
 
-| Category | Steps | When |
-|---|---|---|
-| AWS Account | Account setup, region selection, billing | Before anything |
-| CDK Bootstrap | One-time CDK staging resources | Before first `cdk deploy` |
-| GitHub OIDC | IAM identity provider + role for CI/CD | Before first GitHub Actions deploy |
-| GitHub Repo Config | Secrets and environment variables | Before first GitHub Actions deploy |
-| SES Sandbox Exit | Request production email access | Before prod deployment (takes ~24h) |
-| SES Domain Verification | DNS records for email deliverability | Before prod deployment |
-| Custom Domain (API) | ACM certificate + DNS for `api.vocesdelaextincion.com` | Before prod deployment |
-| AWS Budget Alerts | Cost monitoring | After first deployment |
+| Category                | Steps                                                  | When                                |
+| ----------------------- | ------------------------------------------------------ | ----------------------------------- |
+| AWS Account             | Account setup, region selection, billing               | Before anything                     |
+| CDK Bootstrap           | One-time CDK staging resources                         | Before first `cdk deploy`           |
+| GitHub OIDC             | IAM identity provider + role for CI/CD                 | Before first GitHub Actions deploy  |
+| GitHub Repo Config      | Secrets and environment variables                      | Before first GitHub Actions deploy  |
+| SES Sandbox Exit        | Request production email access                        | Before prod deployment (takes ~24h) |
+| SES Domain Verification | DNS records for email deliverability                   | Before prod deployment              |
+| Custom Domain (API)     | ACM certificate + DNS for `api.vocesdelaextincion.com` | Before prod deployment              |
+| AWS Budget Alerts       | Cost monitoring                                        | After first deployment              |
 
 ---
 
@@ -249,10 +249,9 @@ After the initial setup is working, replace `AdministratorAccess` with a scoped 
   - `lambda:*`
   - `apigateway:*`
   - `cognito-idp:*`
-  - `rds:*`
-  - `ec2:*` (for VPC/subnets/security groups)
+  - `dynamodb:*`
+  - `ec2:*` (for VPC/subnets/security groups — prod only)
   - `iam:*` (for creating Lambda execution roles)
-  - `secretsmanager:*`
   - `ssm:*`
   - `ses:*`
   - `logs:*`
@@ -276,6 +275,7 @@ After the initial setup is working, replace `AdministratorAccess` with a scoped 
 ## Complete Checklist (Ordered)
 
 ### Before first deploy
+
 - [ ] AWS account active with billing
 - [ ] Primary region chosen (`us-east-1`)
 - [ ] Root account MFA enabled
@@ -293,6 +293,7 @@ After the initial setup is working, replace `AdministratorAccess` with a scoped 
 - [ ] GitHub `production` secret set (`AWS_ROLE_ARN_PROD`)
 
 ### Before prod deploy (start early, can overlap with dev work)
+
 - [ ] SES production access requested
 - [ ] SES email identity verified (dev)
 - [ ] SES domain identity created (prod)
@@ -304,6 +305,7 @@ After the initial setup is working, replace `AdministratorAccess` with a scoped 
 - [ ] ACM certificate issued
 
 ### After first prod deploy
+
 - [ ] DNS record added for custom API domain (CNAME → API Gateway)
 - [ ] Budget alerts configured
 - [ ] GitHub Actions IAM roles scoped down

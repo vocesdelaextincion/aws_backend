@@ -6,7 +6,7 @@ I'll first define what we have so far and then outline the migration process.
 ## What we have
 
 - A backend server written in Node.js and TypeScript
-- A PostgreSQL database
+- A PostgreSQL database (legacy — will be replaced)
 - An S3 bucket for storing audio files
 - An AWS account with the necessary permissions
 - A Gmail account for sending emails
@@ -14,7 +14,7 @@ I'll first define what we have so far and then outline the migration process.
 ## What we need to do
 
 - We'll move all the backend in Node to AWS Lambdas
-- We'll move the PostgreSQL database to AWS RDS
+- We'll move the PostgreSQL database to AWS DynamoDB (NoSQL, serverless-native)
 - We'll move the S3 bucket to AWS S3
 - We'll move the Gmail account to AWS SES
 - We'll move the Google Cloud account to AWS Cognito

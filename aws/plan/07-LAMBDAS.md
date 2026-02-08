@@ -54,7 +54,7 @@ index.ts (Express app)
 ### Why one-per-group (not one-per-endpoint)?
 
 - 22 individual Lambdas is excessive management overhead
-- Functions within a group share dependencies (Prisma, S3 client)
+- Functions within a group share dependencies (DynamoDB client, S3 client)
 - Warm containers serve multiple endpoints within the group
 - Still isolated enough that a recording bug doesn't affect auth
 
@@ -113,10 +113,10 @@ Common configuration:
 - Architecture: arm64 (Graviton2 — cheaper, faster)
 - Memory: 256 MB (default, tune per function)
 - Timeout: 30 seconds (default, tune per function)
-- VPC: Yes (for RDS access) — except metrics (if it can use a read replica or cache)
-- Layers: Prisma engine layer (shared)
+- VPC: No (DynamoDB is accessed via IAM, no VPC needed for DB) — see Part 8 for VPC discussion
+- Layers: None required (DynamoDB SDK is lightweight, bundled with esbuild)
 - Environment variables:
-  - DATABASE_URL (from Secrets Manager)
+  - TABLE_NAME (from database stack)
   - S3_BUCKET_NAME (from storage stack)
   - PRESIGNED_URL_TTL_FREE (e.g., 900 = 15 min)
   - PRESIGNED_URL_TTL_PREMIUM (e.g., 3600 = 1 hour)
@@ -127,14 +127,14 @@ Common configuration:
 
 ### IAM Roles (Per Function)
 
-| Lambda     | Permissions                                                                                                                                                                        |
-| ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| auth       | `cognito-idp:SignUp`, `cognito-idp:InitiateAuth`, `cognito-idp:ConfirmSignUp`, `cognito-idp:ForgotPassword`, `cognito-idp:ConfirmForgotPassword`, RDS access, Secrets Manager read |
-| users      | RDS access, Secrets Manager read                                                                                                                                                   |
-| recordings | RDS access, Secrets Manager read, `s3:PutObject`, `s3:DeleteObject`, `s3:GetObject` (for presigned URLs)                                                                           |
-| tags       | RDS access, Secrets Manager read                                                                                                                                                   |
-| admin      | RDS access, Secrets Manager read, `cognito-idp:AdminUpdateUserAttributes`, `cognito-idp:AdminDeleteUser`                                                                           |
-| metrics    | RDS access, Secrets Manager read                                                                                                                                                   |
+| Lambda     | Permissions                                                                                                                                                           |
+| ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| auth       | `cognito-idp:SignUp`, `cognito-idp:InitiateAuth`, `cognito-idp:ConfirmSignUp`, `cognito-idp:ForgotPassword`, `cognito-idp:ConfirmForgotPassword`, DynamoDB read/write |
+| users      | DynamoDB read                                                                                                                                                         |
+| recordings | DynamoDB read/write, `s3:PutObject`, `s3:DeleteObject`, `s3:GetObject` (for presigned URLs)                                                                           |
+| tags       | DynamoDB read/write                                                                                                                                                   |
+| admin      | DynamoDB read/write, `cognito-idp:AdminUpdateUserAttributes`, `cognito-idp:AdminDeleteUser`                                                                           |
+| metrics    | DynamoDB read (Scan with count)                                                                                                                                       |
 
 ---
 
@@ -181,7 +181,7 @@ aws/lambdas/
 ├── triggers/
 │   └── cognito-custom-message.ts
 └── shared/
-    ├── prisma.ts           # Prisma client singleton (reused across invocations)
+    ├── db.ts               # DynamoDB DocumentClient singleton (reused across invocations)
     ├── response.ts         # Standard response helpers (200, 400, 404, etc.)
     ├── validation.ts       # Input validation (replaces express-validator)
     ├── auth.ts             # Extract user claims from API Gateway event
@@ -353,14 +353,12 @@ Each Lambda function is bundled with **esbuild** (fast, tree-shakes, handles Typ
 
 - CDK's `NodejsFunction` construct uses esbuild by default
 - Bundles only the code each function needs
-- External: `@prisma/client` (loaded from layer)
+- No externals needed (DynamoDB SDK is lightweight)
 - Output: Single `.js` file per function
 
 ### Lambda Layers
 
-| Layer         | Contents                                                      | Shared By                    |
-| ------------- | ------------------------------------------------------------- | ---------------------------- |
-| Prisma Engine | `@prisma/client` + query engine binary (`rhel-openssl-3.0.x`) | All functions that access DB |
+No Lambda Layers are required. The DynamoDB SDK (`@aws-sdk/lib-dynamodb`) is lightweight (~1MB bundled) and is included directly in each function's esbuild bundle. This is a significant simplification over the previous Prisma-based plan, which required a ~40MB Lambda Layer for the Prisma query engine.
 
 ### Deployment
 
@@ -374,14 +372,13 @@ Each Lambda function is bundled with **esbuild** (fast, tree-shakes, handles Typ
 
 ## Cold Start Optimization
 
-| Technique                     | Impact                                                                         |
-| ----------------------------- | ------------------------------------------------------------------------------ |
-| arm64 (Graviton2)             | ~20% faster cold starts vs x86                                                 |
-| 256MB+ memory                 | More memory = more CPU = faster init                                           |
-| Prisma in Lambda Layer        | Layer is cached across deployments                                             |
-| Prisma client outside handler | Reused across warm invocations                                                 |
-| VPC with NAT (fck-nat / GW)   | Adds ~2-5s cold start; mitigate with Provisioned Concurrency in prod if needed |
-| esbuild tree-shaking          | Smaller bundles = faster load                                                  |
+| Technique                       | Impact                                          |
+| ------------------------------- | ----------------------------------------------- |
+| arm64 (Graviton2)               | ~20% faster cold starts vs x86                  |
+| 256MB+ memory                   | More memory = more CPU = faster init            |
+| DynamoDB client outside handler | Reused across warm invocations                  |
+| No VPC needed for DB            | Eliminates 2-5s VPC cold start penalty entirely |
+| esbuild tree-shaking            | Smaller bundles = faster load                   |
 
 ### Provisioned Concurrency (Future, Prod Only)
 
@@ -398,26 +395,26 @@ Cost: ~$15/month per provisioned instance (~$60/month total). **Do not enable un
 
 ## Environment-Specific Configuration
 
-| Parameter               | Dev           | Prod                                         |
-| ----------------------- | ------------- | -------------------------------------------- |
-| Memory                  | 256 MB        | 512 MB (tune based on metrics)               |
-| Timeout                 | 30 sec        | 30 sec                                       |
-| Provisioned concurrency | 0             | 0 (enable later if cold starts are an issue) |
-| Logging level           | DEBUG         | INFO                                         |
-| X-Ray tracing           | Off           | On                                           |
-| DB connection           | Direct to RDS | Via RDS Proxy                                |
+| Parameter               | Dev            | Prod                                         |
+| ----------------------- | -------------- | -------------------------------------------- |
+| Memory                  | 256 MB         | 512 MB (tune based on metrics)               |
+| Timeout                 | 30 sec         | 30 sec                                       |
+| Provisioned concurrency | 0              | 0 (enable later if cold starts are an issue) |
+| Logging level           | DEBUG          | INFO                                         |
+| X-Ray tracing           | Off            | On                                           |
+| DB access               | DynamoDB (IAM) | DynamoDB (IAM)                               |
 
 ---
 
 ## Risks and Mitigations
 
-| Risk                          | Mitigation                                                                    |
-| ----------------------------- | ----------------------------------------------------------------------------- |
-| VPC Lambda cold starts (2-5s) | Measure post-launch; enable provisioned concurrency in prod only if justified |
-| Multipart parsing in Lambda   | Use `busboy` or `lambda-multipart-parser`; well-tested libraries              |
-| express-validator removal     | Replace with Zod; same validation rules, different syntax                     |
-| Many Lambdas to manage        | One-per-group keeps it to 6-8 functions; CDK abstracts deployment             |
-| Prisma binary size            | Lambda Layer caches it; doesn't count against function size limit             |
+| Risk                        | Mitigation                                                                 |
+| --------------------------- | -------------------------------------------------------------------------- |
+| Cold starts                 | No VPC penalty for DB; only relevant if Lambda needs VPC for other reasons |
+| Multipart parsing in Lambda | Use `busboy` or `lambda-multipart-parser`; well-tested libraries           |
+| express-validator removal   | Replace with Zod; same validation rules, different syntax                  |
+| Many Lambdas to manage      | One-per-group keeps it to 6-8 functions; CDK abstracts deployment          |
+| DynamoDB SDK size           | Lightweight (~1MB bundled); no Lambda Layer needed                         |
 
 ---
 
@@ -437,8 +434,8 @@ Cost: ~$15/month per provisioned instance (~$60/month total). **Do not enable un
 - [ ] Pagination and search work on recordings, tags, and admin users
 - [ ] Input validation returns proper error responses matching legacy format
 - [ ] All existing API response shapes preserved (frontend compatibility)
-- [ ] Prisma client reused across warm invocations (no connection leaks)
-- [ ] Cold starts under 3 seconds for VPC-attached functions
+- [ ] DynamoDB client reused across warm invocations
+- [ ] Cold starts under 1 second (no VPC attachment for DB access)
 
 ```
 

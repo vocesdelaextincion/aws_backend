@@ -10,71 +10,69 @@ Define the VPC topology, security group rules, IAM boundaries, logging, monitori
 
 ### Why a VPC?
 
-RDS must live in a VPC. Lambda functions that access RDS must also be in the VPC. This is non-negotiable for database security.
+With DynamoDB (accessed via IAM over HTTPS, no VPC required), Lambdas **do not need to be in a VPC for database access**. However, a VPC may still be needed if Lambdas call AWS services that lack VPC endpoints and require NAT (e.g., Cognito APIs). If all AWS service calls can be handled via VPC endpoints or don't require VPC, the VPC can be simplified or eliminated entirely.
 
-### Topology
+**Recommendation for dev**: Start **without a VPC** for Lambda functions. DynamoDB, S3, SES, and Cognito are all accessible over the public internet via IAM. Only add a VPC if a specific requirement demands it.
+
+**Recommendation for prod**: Evaluate whether a VPC adds security value. For a serverless-only architecture with DynamoDB, a VPC is optional — not mandatory.
+
+### Topology (Simplified — No VPC for Dev)
+
+With DynamoDB replacing RDS, the VPC topology is dramatically simplified:
+
+**Dev environment**: No VPC. Lambda functions run outside a VPC and access all AWS services (DynamoDB, S3, Cognito, SES) directly via IAM over HTTPS.
+
+**Prod environment** (if VPC is desired for defense-in-depth):
 
 ```
-VPC: voces-{env}-vpc (CIDR: 10.0.0.0/16)
+VPC: voces-prod-vpc (CIDR: 10.0.0.0/16)
 │
 ├── Public Subnets (2 AZs)
 │   ├── 10.0.1.0/24 (AZ-a)
 │   └── 10.0.2.0/24 (AZ-b)
-│   └── fck-nat instance (dev) / NAT Gateway (one per AZ in prod)
+│   └── NAT Gateway (one per AZ)
 │
-├── Private Subnets — Application (2 AZs)
-│   ├── 10.0.10.0/24 (AZ-a)
-│   └── 10.0.20.0/24 (AZ-b)
-│   └── Lambda functions run here
-│
-└── Private Subnets — Database (2 AZs)
-    ├── 10.0.100.0/24 (AZ-a)
-    └── 10.0.200.0/24 (AZ-b)
-    └── RDS instance (dev) / Aurora cluster (prod) runs here
+└── Private Subnets — Application (2 AZs)
+    ├── 10.0.10.0/24 (AZ-a)
+    └── 10.0.20.0/24 (AZ-b)
+    └── Lambda functions run here (if VPC is used)
 ```
 
-### Subnet Purposes
+Note: **No database subnets needed.** DynamoDB is a fully managed service accessed over HTTPS — it doesn't live in a VPC.
 
-| Subnet Type   | Contains                                       | Internet Access                           |
-| ------------- | ---------------------------------------------- | ----------------------------------------- |
-| Public        | fck-nat instance (dev) / NAT Gateway (prod)    | Direct (Internet Gateway)                 |
-| Private — App | Lambda functions                               | Outbound only (via fck-nat / NAT Gateway) |
-| Private — DB  | RDS instance (dev) / Aurora + RDS Proxy (prod) | None                                      |
+### Subnet Purposes (Prod Only, If VPC Is Used)
 
-### Why Lambda needs outbound internet (NAT Gateway)
+| Subnet Type   | Contains                           | Internet Access                 |
+| ------------- | ---------------------------------- | ------------------------------- |
+| Public        | NAT Gateway (prod only)            | Direct (Internet Gateway)       |
+| Private — App | Lambda functions (if VPC-attached) | Outbound only (via NAT Gateway) |
 
-Lambda functions in a VPC have **no internet access** by default. They need a NAT device to reach:
+### Why Lambda May NOT Need a VPC (Dev)
 
-- AWS Cognito APIs (sign up, auth)
-- AWS SES APIs (if sending custom emails)
-- AWS Secrets Manager / SSM (to fetch secrets)
-- Any external service
+With DynamoDB replacing RDS, the primary reason for putting Lambdas in a VPC is gone. All AWS services used by our Lambdas are accessible without a VPC:
 
-**Alternative**: Use **VPC Endpoints** for AWS services to reduce NAT traffic:
+| Service         | VPC Required? | Access Method                    |
+| --------------- | ------------- | -------------------------------- |
+| DynamoDB        | No            | IAM over HTTPS (public endpoint) |
+| S3              | No            | IAM over HTTPS (public endpoint) |
+| Cognito         | No            | IAM over HTTPS (public endpoint) |
+| SES             | No            | IAM over HTTPS (public endpoint) |
+| SSM Param Store | No            | IAM over HTTPS (public endpoint) |
 
-| Service             | VPC Endpoint Type         | Eliminates NAT for      |
-| ------------------- | ------------------------- | ----------------------- |
-| Secrets Manager     | Interface                 | Fetching DB credentials |
-| SSM Parameter Store | Interface                 | Fetching config         |
-| S3                  | Gateway (free)            | S3 uploads/deletes      |
-| SES                 | Interface                 | Sending emails          |
-| Cognito             | Not available (needs NAT) | —                       |
+**For dev**: No VPC. This eliminates:
 
-**Recommendation**: Use S3 Gateway Endpoint (free) + NAT device for everything else. Add interface endpoints in prod to reduce NAT data transfer costs if they become significant.
+- fck-nat / NAT Gateway cost (~$3-32/month)
+- VPC cold start penalty (2-5s)
+- Security group management
+- Subnet configuration
 
-### NAT Device Strategy: fck-nat (Dev) vs NAT Gateway (Prod)
+**For prod**: A VPC can be added later for defense-in-depth if needed. VPC endpoints for DynamoDB (Gateway, free) and S3 (Gateway, free) can be used to keep traffic on the AWS backbone.
 
-NAT Gateway costs ~$32/month (fixed) + data transfer — too expensive for a non-professional project.
+### NAT Device Strategy
 
-**For dev**: Use **[fck-nat](https://fck-nat.dev/)** — a community-maintained, purpose-built NAT instance AMI:
+**For dev**: Not needed. No VPC = no NAT.
 
-- Runs on a `t4g.nano` (~$3/month)
-- ARM64 (Graviton2), optimized for NAT workloads
-- Supports high availability via auto-scaling group (optional)
-- Battle-tested, widely used in the AWS community
-- Saves ~$29/month vs NAT Gateway
-
-**For prod**: Use **NAT Gateway** (one per AZ) for managed high availability and throughput.
+**For prod** (if VPC is used): Use **NAT Gateway** (one per AZ) for managed high availability. VPC Gateway Endpoints for DynamoDB and S3 are free and keep that traffic off the NAT.
 
 ---
 
@@ -82,65 +80,49 @@ NAT Gateway costs ~$32/month (fixed) + data transfer — too expensive for a non
 
 The `network-stack.ts` will create:
 
-### 1. VPC
+### 1. VPC (Prod Only — Dev Has No VPC)
 
-```
-Configuration:
-- CIDR: 10.0.0.0/16
-- Max AZs: 2
-- Subnet groups:
-  - Public (for NAT Gateway)
-  - Private with egress (for Lambda — routes through NAT)
-  - Private isolated (for RDS — no internet)
-- NAT: fck-nat t4g.nano (dev) / 2 NAT Gateways (prod)
-```
+**Dev**: No VPC created. The `network-stack.ts` is a no-op or skipped in dev.
 
-For prod, CDK's `Vpc` construct handles NAT Gateways automatically. For dev, we use fck-nat:
+**Prod** (if VPC is desired):
 
 ```typescript
-// Prod: managed NAT Gateways
-const vpc = new ec2.Vpc(this, "VocesVpc", {
-  maxAzs: 2,
-  natGateways: isProd ? 2 : 0, // 0 for dev — we add fck-nat manually
-  subnetConfiguration: [
-    { name: "Public", subnetType: ec2.SubnetType.PUBLIC },
-    { name: "Application", subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
-    { name: "Database", subnetType: ec2.SubnetType.PRIVATE_ISOLATED },
-  ],
-});
-
-// Dev: fck-nat instance (CDK construct available via cdk-fck-nat package)
-// See: https://github.com/AndrewGuenther/cdk-fck-nat
-if (!isProd) {
-  // fck-nat provides a CDK construct that creates a t4g.nano NAT instance
-  // and configures route tables automatically
+if (isProd) {
+  const vpc = new ec2.Vpc(this, "VocesVpc", {
+    maxAzs: 2,
+    natGateways: 2,
+    subnetConfiguration: [
+      { name: "Public", subnetType: ec2.SubnetType.PUBLIC },
+      { name: "Application", subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
+    ],
+  });
 }
 ```
 
-### 2. Security Groups
+Note: No `PRIVATE_ISOLATED` (database) subnets needed — DynamoDB doesn't live in a VPC.
 
-| Security Group             | Inbound Rules                            | Outbound Rules                             | Used By                       |
-| -------------------------- | ---------------------------------------- | ------------------------------------------ | ----------------------------- |
-| `voces-{env}-lambda-sg`    | None (Lambda initiates, doesn't receive) | All traffic (needed for NAT/VPC endpoints) | All Lambda functions          |
-| `voces-{env}-rds-sg`       | TCP 5432 from `lambda-sg`                | None                                       | RDS instance / Aurora cluster |
-| `voces-{env}-rds-proxy-sg` | TCP 5432 from `lambda-sg`                | TCP 5432 to `rds-sg`                       | RDS Proxy (prod only)         |
+### 2. Security Groups (Prod Only)
 
-### 3. VPC Endpoints
+| Security Group         | Inbound Rules                            | Outbound Rules                             | Used By              |
+| ---------------------- | ---------------------------------------- | ------------------------------------------ | -------------------- |
+| `voces-prod-lambda-sg` | None (Lambda initiates, doesn't receive) | All traffic (needed for NAT/VPC endpoints) | All Lambda functions |
 
-| Endpoint        | Type      | Cost             |
-| --------------- | --------- | ---------------- |
-| S3              | Gateway   | Free             |
-| Secrets Manager | Interface | ~$7/month per AZ |
-| SSM             | Interface | ~$7/month per AZ |
+No database security groups needed — DynamoDB access is controlled entirely by IAM policies.
 
-Start with S3 Gateway only. Add interface endpoints if NAT costs justify it.
+### 3. VPC Endpoints (Prod Only)
+
+| Endpoint | Type    | Cost |
+| -------- | ------- | ---- |
+| DynamoDB | Gateway | Free |
+| S3       | Gateway | Free |
+
+Gateway endpoints for DynamoDB and S3 are free and keep traffic on the AWS backbone. Interface endpoints for other services can be added if NAT data transfer costs become significant.
 
 ### Stack Outputs
 
-- `VpcId`
-- `ApplicationSubnetIds`
-- `DatabaseSubnetIds`
-- `LambdaSecurityGroupId`
+- `VpcId` (prod only)
+- `ApplicationSubnetIds` (prod only)
+- `LambdaSecurityGroupId` (prod only)
 
 ---
 
@@ -152,32 +134,28 @@ Each Lambda function gets its own IAM execution role with only the permissions i
 
 ### Role Definitions
 
-| Lambda                     | IAM Permissions                                                                                                                                                                                                                                   |
-| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **auth**                   | `cognito-idp:SignUp`, `cognito-idp:InitiateAuth`, `cognito-idp:ConfirmSignUp`, `cognito-idp:ForgotPassword`, `cognito-idp:ConfirmForgotPassword`, `secretsmanager:GetSecretValue` (DB secret), VPC execution (`ec2:CreateNetworkInterface`, etc.) |
-| **users**                  | `secretsmanager:GetSecretValue` (DB secret), VPC execution                                                                                                                                                                                        |
-| **recordings**             | `s3:PutObject`, `s3:DeleteObject`, `s3:GetObject` (scoped to recordings bucket, GetObject for presigned URLs), `secretsmanager:GetSecretValue` (DB secret), VPC execution                                                                         |
-| **tags**                   | `secretsmanager:GetSecretValue` (DB secret), VPC execution                                                                                                                                                                                        |
-| **admin**                  | `cognito-idp:AdminUpdateUserAttributes`, `cognito-idp:AdminDeleteUser`, `secretsmanager:GetSecretValue` (DB secret), VPC execution                                                                                                                |
-| **metrics**                | `secretsmanager:GetSecretValue` (DB secret), VPC execution                                                                                                                                                                                        |
-| **cognito-custom-message** | None (receives event, returns response)                                                                                                                                                                                                           |
+| Lambda                     | IAM Permissions                                                                                                                                                |
+| -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **auth**                   | `cognito-idp:SignUp`, `cognito-idp:InitiateAuth`, `cognito-idp:ConfirmSignUp`, `cognito-idp:ForgotPassword`, `cognito-idp:ConfirmForgotPassword`, DynamoDB R/W |
+| **users**                  | DynamoDB read (scoped to table + GSIs)                                                                                                                         |
+| **recordings**             | `s3:PutObject`, `s3:DeleteObject`, `s3:GetObject` (scoped to recordings bucket), DynamoDB R/W (scoped to table + GSIs)                                         |
+| **tags**                   | DynamoDB R/W (scoped to table + GSIs)                                                                                                                          |
+| **admin**                  | `cognito-idp:AdminUpdateUserAttributes`, `cognito-idp:AdminDeleteUser`, DynamoDB R/W (scoped to table + GSIs)                                                  |
+| **metrics**                | DynamoDB read (scoped to table — Scan with count)                                                                                                              |
+| **cognito-custom-message** | None (receives event, returns response)                                                                                                                        |
 
 ### VPC Execution Permissions
 
-All VPC-attached Lambdas need the `AWSLambdaVPCAccessExecutionRole` managed policy, which grants:
+In dev (no VPC), Lambdas do not need VPC execution permissions.
 
-- `ec2:CreateNetworkInterface`
-- `ec2:DescribeNetworkInterfaces`
-- `ec2:DeleteNetworkInterface`
-
-CDK adds this automatically when you attach a Lambda to a VPC.
+In prod (if VPC is used), VPC-attached Lambdas need the `AWSLambdaVPCAccessExecutionRole` managed policy. CDK adds this automatically when you attach a Lambda to a VPC.
 
 ### Resource-Level Scoping
 
 All IAM policies are scoped to specific resource ARNs:
 
+- DynamoDB: `arn:aws:dynamodb:{region}:{account}:table/voces-{env}-main` and `arn:aws:dynamodb:{region}:{account}:table/voces-{env}-main/index/*`
 - S3: `arn:aws:s3:::voces-{env}-recordings/*`
-- Secrets Manager: `arn:aws:secretsmanager:{region}:{account}:secret:voces-{env}-db-*`
 - Cognito: `arn:aws:cognito-idp:{region}:{account}:userpool/{poolId}`
 
 No wildcard `*` resource permissions.
@@ -188,20 +166,17 @@ No wildcard `*` resource permissions.
 
 ### Where secrets live
 
-| Secret                                                    | Service                     | Accessed By               |
-| --------------------------------------------------------- | --------------------------- | ------------------------- |
-| Database credentials (user, password, host, port, dbname) | Secrets Manager             | All DB-accessing Lambdas  |
-| Cognito User Pool ID                                      | SSM Parameter Store (plain) | Auth Lambda, Admin Lambda |
-| Cognito Client ID                                         | SSM Parameter Store (plain) | Auth Lambda               |
-| S3 Bucket Name                                            | SSM Parameter Store (plain) | Recordings Lambda         |
-| File URL Prefix (CloudFront domain)                       | SSM Parameter Store (plain) | Recordings Lambda         |
-| SES From Address                                          | SSM Parameter Store (plain) | Email-sending Lambdas     |
+| Secret               | Service                     | Accessed By               |
+| -------------------- | --------------------------- | ------------------------- |
+| DynamoDB Table Name  | CDK output / env var        | All DB-accessing Lambdas  |
+| Cognito User Pool ID | SSM Parameter Store (plain) | Auth Lambda, Admin Lambda |
+| Cognito Client ID    | SSM Parameter Store (plain) | Auth Lambda               |
+| S3 Bucket Name       | SSM Parameter Store (plain) | Recordings Lambda         |
+| SES From Address     | SSM Parameter Store (plain) | Email-sending Lambdas     |
 
-### Why Secrets Manager for DB credentials?
+### No Database Secrets Needed
 
-- Automatic rotation support (prod)
-- RDS Proxy integrates natively with Secrets Manager (prod)
-- Structured secret (JSON with host, port, user, password, dbname)
+With DynamoDB, there are no database credentials to manage. Access is controlled entirely by IAM roles attached to each Lambda function. This eliminates the need for Secrets Manager for database access, saving ~$0.40/month and removing credential rotation complexity.
 
 ### Why SSM Parameter Store for non-sensitive config?
 
@@ -270,16 +245,16 @@ Retention: 14 days (dev) / 90 days (prod)
 
 ### CloudWatch Metrics to Monitor
 
-| Metric              | Source                    | Alarm Threshold         |
-| ------------------- | ------------------------- | ----------------------- |
-| Lambda errors       | CloudWatch Lambda metrics | > 5 errors in 5 minutes |
-| Lambda duration     | CloudWatch Lambda metrics | p99 > 10 seconds        |
-| Lambda throttles    | CloudWatch Lambda metrics | > 0 in 5 minutes        |
-| API Gateway 5xx     | CloudWatch API GW metrics | > 10 in 5 minutes       |
-| API Gateway latency | CloudWatch API GW metrics | p99 > 5 seconds         |
-| RDS CPU utilization | CloudWatch RDS metrics    | > 80% for 10 minutes    |
-| RDS connections     | CloudWatch RDS metrics    | > 80% of max            |
-| RDS free storage    | CloudWatch RDS metrics    | < 20%                   |
+| Metric                      | Source                      | Alarm Threshold         |
+| --------------------------- | --------------------------- | ----------------------- |
+| Lambda errors               | CloudWatch Lambda metrics   | > 5 errors in 5 minutes |
+| Lambda duration             | CloudWatch Lambda metrics   | p99 > 10 seconds        |
+| Lambda throttles            | CloudWatch Lambda metrics   | > 0 in 5 minutes        |
+| API Gateway 5xx             | CloudWatch API GW metrics   | > 10 in 5 minutes       |
+| API Gateway latency         | CloudWatch API GW metrics   | p99 > 5 seconds         |
+| DynamoDB throttled requests | CloudWatch DynamoDB metrics | > 0 in 5 minutes        |
+| DynamoDB user errors        | CloudWatch DynamoDB metrics | > 10 in 5 minutes       |
+| DynamoDB system errors      | CloudWatch DynamoDB metrics | > 0 in 5 minutes        |
 
 ### Alarms
 
@@ -291,7 +266,7 @@ A single dashboard showing:
 
 - API request count and latency (by endpoint)
 - Lambda invocations, errors, duration
-- RDS connections, CPU, storage
+- DynamoDB consumed read/write capacity, throttled requests, latency
 - S3 request count
 
 ---
@@ -374,17 +349,18 @@ This is optional for initial deployment — the default API Gateway URL works fi
 
 ## Environment-Specific Configuration Summary
 
-| Parameter         | Dev              | Prod                               |
-| ----------------- | ---------------- | ---------------------------------- |
-| NAT device        | fck-nat t4g.nano | 2 NAT Gateways (HA)                |
-| VPC Endpoints     | S3 Gateway only  | S3 Gateway + Secrets Manager + SSM |
-| Log retention     | 14 days          | 90 days                            |
-| CloudWatch alarms | Minimal          | Full suite                         |
-| Dashboard         | None             | Yes                                |
-| Custom domain     | No               | Yes                                |
-| X-Ray tracing     | Off              | On                                 |
-| Rate limiting     | 100 burst        | 1000 burst                         |
-| WAF               | Off              | Consider (future)                  |
+| Parameter         | Dev           | Prod                                 |
+| ----------------- | ------------- | ------------------------------------ |
+| VPC               | None          | Optional (defense-in-depth)          |
+| NAT device        | None (no VPC) | NAT Gateway (if VPC is used)         |
+| VPC Endpoints     | None (no VPC) | DynamoDB Gateway + S3 Gateway (free) |
+| Log retention     | 14 days       | 90 days                              |
+| CloudWatch alarms | Minimal       | Full suite                           |
+| Dashboard         | None          | Yes                                  |
+| Custom domain     | No            | Yes                                  |
+| X-Ray tracing     | Off           | On                                   |
+| Rate limiting     | 100 burst     | 1000 burst                           |
+| WAF               | Off           | Consider (future)                    |
 
 ---
 
@@ -393,14 +369,16 @@ This is optional for initial deployment — the default API Gateway URL works fi
 When deploying all stacks together, the order matters due to dependencies:
 
 ```
-1. network-stack       (VPC, subnets, security groups)
-2. database-stack      (RDS instance/Aurora, RDS Proxy in prod — needs VPC)
-3. auth-stack          (Cognito User Pool — independent but logical order)
-4. storage-stack       (S3 bucket — independent)
-5. email-stack         (SES identity — independent)
+1. database-stack      (DynamoDB table + GSIs — no VPC dependency)
+2. auth-stack          (Cognito User Pool — independent)
+3. storage-stack       (S3 bucket — independent)
+4. email-stack         (SES identity — independent)
+5. network-stack       (VPC — prod only, optional)
 6. api-gateway-stack   (HTTP API, routes, authorizer — needs auth-stack)
 7. lambdas-stack       (Lambda functions — needs all of the above)
 ```
+
+Note: With DynamoDB, the database stack has **no dependency on the network stack**. Steps 1-4 can be deployed in parallel.
 
 CDK handles this automatically if you declare dependencies between stacks.
 
@@ -408,57 +386,54 @@ CDK handles this automatically if you declare dependencies between stacks.
 
 ## Cost Estimate (Monthly, Dev Environment)
 
-| Service                    | Estimated Cost (free tier) | Estimated Cost (after 12 months) |
-| -------------------------- | -------------------------- | -------------------------------- |
-| Lambda (low traffic)       | ~$0                        | ~$0                              |
-| API Gateway (low traffic)  | ~$0                        | ~$0                              |
-| RDS db.t4g.micro           | **~$0** (free tier)        | ~$12/month                       |
-| fck-nat (t4g.nano)         | ~$3/month                  | ~$3/month                        |
-| S3 (small storage)         | ~$1/month                  | ~$1/month                        |
-| Secrets Manager (1 secret) | ~$0.40/month               | ~$0.40/month                     |
-| CloudWatch Logs            | ~$1/month                  | ~$1/month                        |
-| SES (low volume)           | ~$0                        | ~$0                              |
-| **Total (Dev)**            | **~$5/month**              | **~$17/month**                   |
+| Service                   | Estimated Cost (free tier) | Estimated Cost (after 12 months) |
+| ------------------------- | -------------------------- | -------------------------------- |
+| Lambda (low traffic)      | ~$0                        | ~$0                              |
+| API Gateway (low traffic) | ~$0                        | ~$0                              |
+| DynamoDB (on-demand)      | **~$0** (always free tier) | **~$0** (always free tier)       |
+| S3 (small storage)        | ~$1/month                  | ~$1/month                        |
+| CloudWatch Logs           | ~$1/month                  | ~$1/month                        |
+| SES (low volume)          | ~$0                        | ~$0                              |
+| **Total (Dev)**           | **~$2/month**              | **~$2/month**                    |
 
-### What changed from the original estimate (~$100/month)
+### What changed from the RDS-based plan
 
-| Change                              | Savings        |
-| ----------------------------------- | -------------- |
-| Aurora Serverless v2 → db.t4g.micro | -$44/month     |
-| NAT Gateway → fck-nat (t4g.nano)    | -$29/month     |
-| RDS Proxy removed (dev only)        | -$22/month     |
-| **Total savings**                   | **-$95/month** |
+| Change                                    | Savings          |
+| ----------------------------------------- | ---------------- |
+| RDS db.t4g.micro → DynamoDB (always free) | -$12/month       |
+| fck-nat removed (no VPC needed)           | -$3/month        |
+| Secrets Manager (DB secret) removed       | -$0.40/month     |
+| No VPC = no cold start penalty            | (perf, not cost) |
+| **Total savings vs RDS plan**             | **~$15/month**   |
 
 ### Budget constraint
 
-This is a non-professional project with a **maximum budget of $15/month**. The dev environment must stay within this limit. Cost-intensive features (Aurora Serverless v2, RDS Proxy, NAT Gateway, provisioned concurrency) are reserved for prod only.
+This is a non-professional project with a **maximum budget of $15/month**. With DynamoDB and no VPC, the dev environment costs **~$2/month** — well within budget, with room to spare. Cost-intensive features (NAT Gateway, provisioned concurrency) are reserved for prod only if needed.
 
 ---
 
 ## Risks and Mitigations
 
-| Risk                                              | Mitigation                                                                      |
-| ------------------------------------------------- | ------------------------------------------------------------------------------- |
-| fck-nat instance failure (dev)                    | Acceptable for dev; auto-restart via ASG; prod uses managed NAT Gateways        |
-| VPC adds cold start latency to Lambda             | Provisioned concurrency for critical paths; VPC endpoints reduce external calls |
-| CloudWatch costs grow with log volume             | Set retention policies; use log level filtering                                 |
-| Security group misconfiguration blocks Lambda→RDS | CDK manages SG rules declaratively; test connectivity in CI                     |
-| IAM too restrictive breaks functionality          | Start with broader permissions in dev; tighten for prod                         |
-| Cost overruns                                     | Set AWS Budget alerts at $15 (dev) and $500 (prod)                              |
+| Risk                                          | Mitigation                                                                 |
+| --------------------------------------------- | -------------------------------------------------------------------------- |
+| No VPC means no network-level isolation (dev) | Acceptable for dev; IAM provides access control; add VPC in prod if needed |
+| CloudWatch costs grow with log volume         | Set retention policies; use log level filtering                            |
+| IAM too restrictive breaks functionality      | Start with broader permissions in dev; tighten for prod                    |
+| Cost overruns                                 | Set AWS Budget alerts at $15 (dev) and $500 (prod)                         |
+| DynamoDB throttling under unexpected load     | On-demand mode auto-scales; monitor ThrottledRequests metric               |
 
 ---
 
 ## Definition of Done
 
-- [ ] VPC deployed with correct subnet topology
-- [ ] Security groups allow Lambda → RDS traffic (dev) / Lambda → RDS Proxy → RDS (prod)
-- [ ] fck-nat instance provides outbound internet for Lambda (dev) / NAT Gateway (prod)
-- [ ] S3 Gateway VPC Endpoint configured
-- [ ] All Lambda IAM roles follow least privilege
-- [ ] Secrets stored in Secrets Manager / SSM Parameter Store
+- [ ] Dev: Lambda functions work without VPC (DynamoDB, S3, Cognito all accessible via IAM)
+- [ ] All Lambda IAM roles follow least privilege (scoped to specific DynamoDB table/index ARNs)
+- [ ] Config stored in SSM Parameter Store (no DB secrets needed)
 - [ ] CloudWatch log groups created with retention policies
 - [ ] CloudWatch alarms configured for critical metrics (prod)
 - [ ] API Gateway access logging enabled
 - [ ] Structured JSON logging in all Lambda functions
 - [ ] Full stack deploys successfully in correct order via `cdk deploy --all`
 - [ ] End-to-end test: register → verify → login → create recording → search → delete
+- [ ] (Prod) VPC deployed with correct subnet topology (if used)
+- [ ] (Prod) DynamoDB and S3 Gateway VPC Endpoints configured (if VPC is used)

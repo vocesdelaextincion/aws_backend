@@ -117,7 +117,7 @@ const s3Client = new S3Client({});
 
 Legacy stores a permanent public `fileUrl` in the database. The new setup uses **presigned URLs** generated on demand:
 
-- The database stores only the `fileKey` (S3 object key) — the `fileUrl` field is removed
+- DynamoDB stores only the `fileKey` (S3 object key) — the `fileUrl` field is removed
 - When a user requests a recording, the Lambda generates a short-lived presigned URL
 - The URL expires after the configured TTL — sharing it is useless after expiry
 
@@ -140,7 +140,7 @@ Premium users pay for access to recordings. If download URLs are permanent, user
 
 ```
 1. Client: GET /recordings/abc123
-2. Lambda: Query DB for recording metadata + fileKey
+2. Lambda: Query DynamoDB for recording metadata + fileKey
 3. Lambda: Check user plan (FREE or PREMIUM) and access rules
 4. Lambda: Generate presigned URL with TTL
    → s3.getSignedUrl('getObject', { Bucket, Key: fileKey, Expires: ttl })

@@ -10,12 +10,12 @@ Establish the foundational IaC pipeline so that every AWS resource created in su
 
 ### Why CDK over CloudFormation / Terraform / SAM?
 
-| Option | Pros | Cons | Verdict |
-|---|---|---|---|
-| Raw CloudFormation | Native AWS, no extra tooling | Verbose YAML/JSON, hard to maintain | Too low-level |
-| Terraform | Multi-cloud, mature ecosystem | Not AWS-native, HCL learning curve, state management | Overkill for AWS-only |
-| SAM | Good for Lambda, simpler | Limited for non-Lambda resources (RDS, Cognito, VPC) | Too narrow |
-| **AWS CDK (TypeScript)** | Same language as our Lambdas, high-level constructs, generates CloudFormation, great for complex infra | Requires Node.js | **Best fit** |
+| Option                   | Pros                                                                                                   | Cons                                                      | Verdict               |
+| ------------------------ | ------------------------------------------------------------------------------------------------------ | --------------------------------------------------------- | --------------------- |
+| Raw CloudFormation       | Native AWS, no extra tooling                                                                           | Verbose YAML/JSON, hard to maintain                       | Too low-level         |
+| Terraform                | Multi-cloud, mature ecosystem                                                                          | Not AWS-native, HCL learning curve, state management      | Overkill for AWS-only |
+| SAM                      | Good for Lambda, simpler                                                                               | Limited for non-Lambda resources (DynamoDB, Cognito, VPC) | Too narrow            |
+| **AWS CDK (TypeScript)** | Same language as our Lambdas, high-level constructs, generates CloudFormation, great for complex infra | Requires Node.js                                          | **Best fit**          |
 
 CDK lets us write infrastructure in TypeScript (same as our Lambda code), provides L2/L3 constructs that handle best practices by default, and synthesizes to CloudFormation for deployment.
 
@@ -30,7 +30,7 @@ aws/infra/
 ├── lib/
 │   ├── stacks/
 │   │   ├── network-stack.ts       # VPC, subnets, security groups
-│   │   ├── database-stack.ts      # RDS PostgreSQL
+│   │   ├── database-stack.ts      # DynamoDB table + GSIs
 │   │   ├── auth-stack.ts          # Cognito User Pool
 │   │   ├── storage-stack.ts       # S3 bucket
 │   │   ├── email-stack.ts         # SES configuration
@@ -45,6 +45,7 @@ aws/infra/
 ### Stack Separation Strategy
 
 Each major AWS service gets its own stack. This allows:
+
 - **Independent deployment**: Update the API stack without touching the database.
 - **Clear dependency graph**: CDK handles cross-stack references automatically.
 - **Easier debugging**: A failed deployment is scoped to one stack.
@@ -117,12 +118,12 @@ This is the most secure approach — no AWS secrets stored in GitHub.
 
 ### Required GitHub Secrets / Variables
 
-| Name | Type | Description |
-|---|---|---|
-| `AWS_ACCOUNT_ID` | Variable | AWS account ID |
-| `AWS_REGION` | Variable | Target region (e.g., `us-east-1`) |
-| `AWS_ROLE_ARN_DEV` | Secret | IAM role ARN for dev deployments |
-| `AWS_ROLE_ARN_PROD` | Secret | IAM role ARN for prod deployments |
+| Name                | Type     | Description                       |
+| ------------------- | -------- | --------------------------------- |
+| `AWS_ACCOUNT_ID`    | Variable | AWS account ID                    |
+| `AWS_REGION`        | Variable | Target region (e.g., `us-east-1`) |
+| `AWS_ROLE_ARN_DEV`  | Secret   | IAM role ARN for dev deployments  |
+| `AWS_ROLE_ARN_PROD` | Secret   | IAM role ARN for prod deployments |
 
 ---
 
@@ -152,6 +153,7 @@ Create the OIDC provider in AWS IAM (one-time):
 - **Audience**: `sts.amazonaws.com`
 
 Then create an IAM role with:
+
 - Trust policy scoped to this GitHub repo
 - Permissions: `AdministratorAccess` for initial setup (scope down later)
 
@@ -166,15 +168,15 @@ Then create an IAM role with:
 
 ## Secrets Management Strategy
 
-All application secrets (DB password, JWT secret, etc.) will be stored in **AWS SSM Parameter Store** (SecureString type) or **Secrets Manager**.
+All application secrets (JWT secret, etc.) will be stored in **AWS SSM Parameter Store** (SecureString type) or **Secrets Manager**. Note: DynamoDB uses IAM-based access, so no database credentials are needed.
 
-| Secret | Storage | Accessed By |
-|---|---|---|
-| Database URL | Secrets Manager | Lambda functions |
-| JWT Secret | SSM Parameter Store (SecureString) | Auth Lambda |
-| Cognito config | Automatic (CDK outputs) | Lambda functions |
-| S3 bucket name | Automatic (CDK outputs) | Recording Lambda |
-| SES config | SSM Parameter Store | Email Lambda |
+| Secret              | Storage                            | Accessed By      |
+| ------------------- | ---------------------------------- | ---------------- |
+| DynamoDB Table Name | Automatic (CDK outputs)            | Lambda functions |
+| JWT Secret          | SSM Parameter Store (SecureString) | Auth Lambda      |
+| Cognito config      | Automatic (CDK outputs)            | Lambda functions |
+| S3 bucket name      | Automatic (CDK outputs)            | Recording Lambda |
+| SES config          | SSM Parameter Store                | Email Lambda     |
 
 **No `.env` files in production.** Lambdas read from SSM/Secrets Manager at runtime or receive values as environment variables injected by CDK.
 
@@ -194,12 +196,12 @@ All application secrets (DB password, JWT secret, etc.) will be stored in **AWS 
 
 ## Risks and Mitigations
 
-| Risk | Mitigation |
-|---|---|
-| CDK bootstrap fails | Ensure correct AWS credentials and region; bootstrap is idempotent |
-| OIDC trust policy too broad | Scope to specific repo and branch patterns |
-| Stack dependency cycles | Keep stacks independent; use SSM for cross-stack values when needed |
-| CDK version drift | Pin CDK version in `package.json`; use `npm ci` in CI |
+| Risk                        | Mitigation                                                          |
+| --------------------------- | ------------------------------------------------------------------- |
+| CDK bootstrap fails         | Ensure correct AWS credentials and region; bootstrap is idempotent  |
+| OIDC trust policy too broad | Scope to specific repo and branch patterns                          |
+| Stack dependency cycles     | Keep stacks independent; use SSM for cross-stack values when needed |
+| CDK version drift           | Pin CDK version in `package.json`; use `npm ci` in CI               |
 
 ---
 

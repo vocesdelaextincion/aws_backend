@@ -49,14 +49,14 @@ A single Cognito User Pool replaces all custom auth logic.
 
 The **API routes and response shapes stay the same** for frontend compatibility. The Lambda handlers will translate between the existing API contract and Cognito's APIs.
 
-| Endpoint                           | Before                | After                                                            |
-| ---------------------------------- | --------------------- | ---------------------------------------------------------------- |
-| `POST /auth/register`              | Custom bcrypt + DB    | Lambda calls `cognito.signUp()`, also creates User record in RDS |
-| `POST /auth/verify-email/:token`   | Custom token lookup   | Lambda calls `cognito.confirmSignUp()` with code                 |
-| `POST /auth/login`                 | Custom bcrypt + JWT   | Lambda calls `cognito.initiateAuth()`, returns Cognito tokens    |
-| `POST /auth/forgot-password`       | Custom token + email  | Lambda calls `cognito.forgotPassword()`                          |
-| `POST /auth/reset-password/:token` | Custom token lookup   | Lambda calls `cognito.confirmForgotPassword()`                   |
-| `GET /auth/me`                     | Custom JWT middleware | API Gateway Cognito authorizer + Lambda reads user from DB       |
+| Endpoint                           | Before                | After                                                               |
+| ---------------------------------- | --------------------- | ------------------------------------------------------------------- |
+| `POST /auth/register`              | Custom bcrypt + DB    | Lambda calls `cognito.signUp()`, also creates User item in DynamoDB |
+| `POST /auth/verify-email/:token`   | Custom token lookup   | Lambda calls `cognito.confirmSignUp()` with code                    |
+| `POST /auth/login`                 | Custom bcrypt + JWT   | Lambda calls `cognito.initiateAuth()`, returns Cognito tokens       |
+| `POST /auth/forgot-password`       | Custom token + email  | Lambda calls `cognito.forgotPassword()`                             |
+| `POST /auth/reset-password/:token` | Custom token lookup   | Lambda calls `cognito.confirmForgotPassword()`                      |
+| `GET /auth/me`                     | Custom JWT middleware | API Gateway Cognito authorizer + Lambda reads user from DynamoDB    |
 
 ---
 
@@ -100,32 +100,32 @@ The `auth-stack.ts` will create:
 
 ## User Data Strategy: Dual Storage
 
-Cognito manages **authentication** (credentials, tokens, verification). RDS manages **application data** (plan, recordings, relationships).
+Cognito manages **authentication** (credentials, tokens, verification). DynamoDB manages **application data** (plan, recordings, relationships).
 
-### Why keep the User table in RDS?
+### Why keep the User entity in DynamoDB?
 
 - Cognito is not a general-purpose database — it's optimized for auth.
-- Application queries like "count users", "list users with pagination", "get user by ID for admin panel" are better served by RDS.
+- Application queries like "count users", "list users with pagination", "get user by ID for admin panel" are better served by DynamoDB.
 - The `Recording` model doesn't reference `User` currently, but it might in the future.
-- Admin operations (list users, update plan/role) are easier with SQL.
+- Admin operations (list users, update plan/role) benefit from having a dedicated data store alongside Cognito.
 
 ### Sync Strategy
 
-1. **On registration**: Lambda calls `cognito.signUp()` AND creates a `User` record in RDS (without password fields).
-2. **On login**: Lambda calls `cognito.initiateAuth()`, returns tokens. No RDS write needed.
-3. **On role/plan change**: Admin Lambda updates both Cognito custom attributes AND the RDS User record.
-4. **User ID**: Use the Cognito `sub` (UUID) as the user ID in RDS, replacing the current CUID.
+1. **On registration**: Lambda calls `cognito.signUp()` AND creates a `User` item in DynamoDB (without password fields).
+2. **On login**: Lambda calls `cognito.initiateAuth()`, returns tokens. No DynamoDB write needed.
+3. **On role/plan change**: Admin Lambda updates both Cognito custom attributes AND the DynamoDB User item.
+4. **User ID**: Use the Cognito `sub` (UUID) as the user ID in DynamoDB (`PK = USER#<sub>`), replacing the current CUID.
 
 ### Schema Impact
 
-Since we're building from scratch with Cognito, the User model in RDS will **not** include auth-related fields that Cognito manages. These legacy fields are excluded from the new schema:
+Since we're building from scratch with Cognito, the User entity in DynamoDB will **not** include auth-related fields that Cognito manages. These legacy fields are excluded from the new schema:
 
 - `password` (Cognito stores credentials)
 - `emailVerificationToken` / `emailVerificationTokenExpires` (Cognito handles verification)
 - `passwordResetToken` / `passwordResetTokenExpires` (Cognito handles reset)
 - `isVerified` (Cognito tracks this)
 
-The RDS User model will only contain: `id` (Cognito `sub`), `email`, `plan`, `role`, `createdAt`, `updatedAt`.
+The DynamoDB User item will only contain: `PK/SK` (from Cognito `sub`), `email`, `plan`, `role`, `createdAt`, `updatedAt`. See Part 2 for the full DynamoDB schema.
 
 ---
 
@@ -198,9 +198,9 @@ Alternatively, Cognito can be configured to send a **verification link** instead
 | ------------------------------------------------------------ | -------------------------------------------------------------------------- |
 | Cognito email sending limits (50/day in sandbox)             | Move to SES early (Part 5); request production access                      |
 | Custom attributes can't be required after pool creation      | Define all custom attributes upfront in CDK                                |
-| Cognito `sub` differs from legacy CUID user IDs              | Use Cognito `sub` as new user ID; update RDS references                    |
+| Cognito `sub` differs from legacy CUID user IDs              | Use Cognito `sub` as new user ID in DynamoDB (`USER#<sub>`)                |
 | Frontend needs to handle verification codes instead of links | Document as a known frontend change; can use links if preferred            |
-| Dual storage (Cognito + RDS) can get out of sync             | Registration Lambda writes to both atomically; admin updates write to both |
+| Dual storage (Cognito + DynamoDB) can get out of sync        | Registration Lambda writes to both atomically; admin updates write to both |
 
 ---
 
@@ -209,9 +209,9 @@ Alternatively, Cognito can be configured to send a **verification link** instead
 - [ ] Cognito User Pool deployed via CDK with correct configuration
 - [ ] App Client created with appropriate auth flows
 - [ ] API Gateway Cognito authorizer configured for protected routes
-- [ ] Registration Lambda creates user in both Cognito and RDS
+- [ ] Registration Lambda creates user in both Cognito and DynamoDB
 - [ ] Login Lambda returns Cognito tokens in the existing API response format
 - [ ] Email verification flow works end-to-end
 - [ ] Password reset flow works end-to-end
 - [ ] Admin authorization works via `custom:role` claim
-- [ ] `GET /auth/me` returns user data from RDS using Cognito `sub`
+- [ ] `GET /auth/me` returns user data from DynamoDB using Cognito `sub`
