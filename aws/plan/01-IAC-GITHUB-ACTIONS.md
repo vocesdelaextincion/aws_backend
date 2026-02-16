@@ -29,18 +29,20 @@ aws/infra/
 │   └── app.ts                     # CDK app entry point
 ├── lib/
 │   ├── stacks/
-│   │   ├── network-stack.ts       # VPC, subnets, security groups
+│   │   ├── network-stack.ts       # VPC, subnets, security groups (PROD ONLY - no-op in dev)
 │   │   ├── database-stack.ts      # DynamoDB table + GSIs
 │   │   ├── auth-stack.ts          # Cognito User Pool
 │   │   ├── storage-stack.ts       # S3 bucket
 │   │   ├── email-stack.ts         # SES configuration
-│   │   └── api-stack.ts           # Lambda functions + API Gateway
+│   │   └── api-stack.ts           # Lambda functions + API Gateway + custom domain
 │   └── constructs/                # Reusable CDK constructs
 │       └── ...
 ├── cdk.json
 ├── package.json
 └── tsconfig.json
 ```
+
+**Note**: The `network-stack.ts` is conditional — it creates VPC resources only in prod (if VPC is desired). In dev, the stack is a no-op or skipped entirely. See Part 8 for details.
 
 ### Stack Separation Strategy
 
@@ -168,17 +170,17 @@ Then create an IAM role with:
 
 ## Secrets Management Strategy
 
-All application secrets (JWT secret, etc.) will be stored in **AWS SSM Parameter Store** (SecureString type) or **Secrets Manager**. Note: DynamoDB uses IAM-based access, so no database credentials are needed.
+All application configuration values will be stored in **AWS SSM Parameter Store** (SecureString type for sensitive values). Note: DynamoDB uses IAM-based access, so no database credentials are needed. Cognito manages its own JWT signing keys, so no custom JWT secret is required.
 
-| Secret              | Storage                            | Accessed By      |
-| ------------------- | ---------------------------------- | ---------------- |
-| DynamoDB Table Name | Automatic (CDK outputs)            | Lambda functions |
-| JWT Secret          | SSM Parameter Store (SecureString) | Auth Lambda      |
-| Cognito config      | Automatic (CDK outputs)            | Lambda functions |
-| S3 bucket name      | Automatic (CDK outputs)            | Recording Lambda |
-| SES config          | SSM Parameter Store                | Email Lambda     |
+| Configuration       | Storage                | Accessed By      | Notes                                      |
+| ------------------- | ---------------------- | ---------------- | ------------------------------------------ |
+| DynamoDB Table Name | CDK outputs / env vars | Lambda functions | Injected as environment variable           |
+| Cognito User Pool   | CDK outputs / env vars | Lambda functions | Pool ID and Client ID as env vars          |
+| S3 bucket name      | CDK outputs / env vars | Recording Lambda | Injected as environment variable           |
+| SES From Address    | SSM Parameter Store    | Email Lambda     | Plain parameter (not sensitive)            |
+| API Keys (future)   | Secrets Manager        | Lambda functions | Only if third-party integrations are added |
 
-**No `.env` files in production.** Lambdas read from SSM/Secrets Manager at runtime or receive values as environment variables injected by CDK.
+**No `.env` files in production.** Lambdas receive configuration as environment variables injected by CDK at deployment time.
 
 ---
 

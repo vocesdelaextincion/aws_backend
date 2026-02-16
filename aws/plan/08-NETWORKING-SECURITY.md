@@ -324,30 +324,9 @@ Per-route throttling can be added later for sensitive endpoints (e.g., `/auth/lo
 
 ---
 
-## Custom Domain (Production)
-
-### Setup
-
-1. Register/verify domain in Route 53 (or external DNS)
-2. Request ACM certificate for `api.vocesdelaextincion.com`
-3. Configure API Gateway custom domain mapping
-4. Create Route 53 alias record pointing to API Gateway
-
-### CDK
-
-```typescript
-const certificate = acm.Certificate.fromCertificateArn(this, "Cert", certArn);
-const domainName = new apigatewayv2.DomainName(this, "Domain", {
-  domainName: "api.vocesdelaextincion.com",
-  certificate,
-});
-```
-
-This is optional for initial deployment — the default API Gateway URL works fine for development.
-
----
-
 ## Environment-Specific Configuration Summary
+
+**Note**: Custom domain configuration is handled in Part 6 (API Gateway), not here.
 
 | Parameter         | Dev           | Prod                                 |
 | ----------------- | ------------- | ------------------------------------ |

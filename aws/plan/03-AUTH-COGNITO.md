@@ -49,14 +49,14 @@ A single Cognito User Pool replaces all custom auth logic.
 
 The **API routes and response shapes stay the same** for frontend compatibility. The Lambda handlers will translate between the existing API contract and Cognito's APIs.
 
-| Endpoint                           | Before                | After                                                               |
-| ---------------------------------- | --------------------- | ------------------------------------------------------------------- |
-| `POST /auth/register`              | Custom bcrypt + DB    | Lambda calls `cognito.signUp()`, also creates User item in DynamoDB |
-| `POST /auth/verify-email/:token`   | Custom token lookup   | Lambda calls `cognito.confirmSignUp()` with code                    |
-| `POST /auth/login`                 | Custom bcrypt + JWT   | Lambda calls `cognito.initiateAuth()`, returns Cognito tokens       |
-| `POST /auth/forgot-password`       | Custom token + email  | Lambda calls `cognito.forgotPassword()`                             |
-| `POST /auth/reset-password/:token` | Custom token lookup   | Lambda calls `cognito.confirmForgotPassword()`                      |
-| `GET /auth/me`                     | Custom JWT middleware | API Gateway Cognito authorizer + Lambda reads user from DynamoDB    |
+| Endpoint                     | Before                | After                                                               |
+| ---------------------------- | --------------------- | ------------------------------------------------------------------- |
+| `POST /auth/register`        | Custom bcrypt + DB    | Lambda calls `cognito.signUp()`, also creates User item in DynamoDB |
+| `POST /auth/verify-email`    | Custom token lookup   | Lambda calls `cognito.confirmSignUp()` with code from request body  |
+| `POST /auth/login`           | Custom bcrypt + JWT   | Lambda calls `cognito.initiateAuth()`, returns Cognito tokens       |
+| `POST /auth/forgot-password` | Custom token + email  | Lambda calls `cognito.forgotPassword()`                             |
+| `POST /auth/reset-password`  | Custom token lookup   | Lambda calls `cognito.confirmForgotPassword()` with code from body  |
+| `GET /auth/me`               | Custom JWT middleware | API Gateway Cognito authorizer + Lambda reads user from DynamoDB    |
 
 ---
 
@@ -70,8 +70,9 @@ The `auth-stack.ts` will create:
 - **Password policy**: Minimum 8 characters (matching legacy), require at least one number
 - **Email verification**: Required, via Cognito-managed email (or SES in prod — see Part 5)
 - **Custom attributes**:
-  - `custom:role` (String, mutable) — `USER` or `ADMIN`
-  - `custom:plan` (String, mutable) — `FREE` or `PREMIUM`
+  - `custom:role` (String, **admin-only writable**) — `USER` or `ADMIN`
+  - `custom:plan` (String, **admin-only writable**) — `FREE` or `PREMIUM`
+  - **CRITICAL**: These attributes must NOT be included in the app client's writable attributes list. Only admins via `AdminUpdateUserAttributes` can modify them. If users can call `UpdateUserAttributes` on these, they could escalate to ADMIN or PREMIUM.
 - **Account recovery**: Email-based
 - **Token validity**:
   - Access token: 1 hour
@@ -115,6 +116,23 @@ Cognito manages **authentication** (credentials, tokens, verification). DynamoDB
 2. **On login**: Lambda calls `cognito.initiateAuth()`, returns tokens. No DynamoDB write needed.
 3. **On role/plan change**: Admin Lambda updates both Cognito custom attributes AND the DynamoDB User item.
 4. **User ID**: Use the Cognito `sub` (UUID) as the user ID in DynamoDB (`PK = USER#<sub>`), replacing the current CUID.
+
+### Plan Change Workflow
+
+**How subscription plans are managed**:
+
+This is a **non-commercial project** with no payment system. Plan changes are **admin-driven only**:
+
+1. Admin calls `PUT /admin/users/{id}` with `{ "plan": "PREMIUM" }` in the request body
+2. Admin Lambda validates the request (admin role check)
+3. Admin Lambda updates Cognito: `AdminUpdateUserAttributes` to set `custom:plan = PREMIUM`
+4. Admin Lambda updates DynamoDB: `UpdateItem` to set `plan = PREMIUM`
+5. Both updates must succeed (use try/catch to handle partial failures)
+
+**No automatic plan changes** from payment webhooks, subscriptions, or user self-service. If a payment system is added later, the workflow would be:
+
+- Payment webhook → Lambda → Update Cognito + DynamoDB
+- Same dual-write pattern as admin updates
 
 ### Schema Impact
 
@@ -167,17 +185,25 @@ This replaces the legacy `admin` middleware.
 
 ### Legacy
 
-1. Register → Server generates token → Server sends email via Gmail → User clicks link → Server verifies token in DB
+1. Register → Server generates token → Server sends email via Gmail → User clicks link with token → Server verifies token in DB
 
 ### With Cognito
 
-1. Register → Lambda calls `cognito.signUp()` → Cognito sends verification code via email (SES) → User submits code → Lambda calls `cognito.confirmSignUp()`
+1. Register → Lambda calls `cognito.signUp()` → Cognito sends verification code via email (SES) → User submits code via `POST /auth/verify-email` → Lambda calls `cognito.confirmSignUp()`
 
-**Frontend change needed**: The verification flow changes from a link-based token to a **6-digit code**. The frontend will need to provide a code input form instead of just clicking a link.
+**Frontend change needed**: The verification flow changes from a link-based token to a **6-digit code**. The frontend will need to:
 
-Alternatively, Cognito can be configured to send a **verification link** instead of a code. This preserves the current UX but requires a hosted endpoint to handle the link callback.
+1. Remove the `{token}` path parameter from the verify-email route
+2. Change from `POST /auth/verify-email/:token` to `POST /auth/verify-email`
+3. Send the code in the request body: `{ "email": "user@example.com", "code": "123456" }`
+4. Provide a code input form instead of just clicking a link
 
-**Recommendation**: Use verification **codes** (simpler, no callback endpoint needed). Document this as a frontend change requirement.
+The same applies to password reset:
+
+- Change from `POST /auth/reset-password/:token` to `POST /auth/reset-password`
+- Send `{ "email": "user@example.com", "code": "123456", "newPassword": "..." }` in the request body
+
+**Recommendation**: Use verification **codes** (simpler, no callback endpoint needed, more secure than URL tokens). This is a **breaking change** for the frontend that must be coordinated.
 
 ---
 

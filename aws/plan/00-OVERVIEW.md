@@ -4,6 +4,8 @@
 
 This document is the index for the full migration plan of the **Voces de la Extinción** backend from a Node.js/Express monolith to a fully serverless AWS architecture, managed entirely through Infrastructure as Code (IaC) via GitHub Actions.
 
+**Important**: This is a **greenfield deployment** — no data migration from the legacy database is required. The new AWS infrastructure will be built from scratch, and initial data (admin user, tags, recordings) will be seeded manually after deployment.
+
 ---
 
 ## Current Architecture (Legacy)
@@ -22,14 +24,14 @@ This document is the index for the full migration plan of the **Voces de la Exti
 
 ### Legacy API Surface
 
-| Route Group   | Endpoints                                                          | Auth                        | Notes                                         |
-| ------------- | ------------------------------------------------------------------ | --------------------------- | --------------------------------------------- |
-| `/auth`       | register, login, verify-email, forgot-password, reset-password, me | Public + Protected          | Email verification + password reset flows     |
-| `/users`      | me                                                                 | Protected                   | User profile                                  |
-| `/recordings` | CRUD + bulk download, download-all                                 | Protected (admin for write) | S3 file upload via multer, pagination, search |
-| `/tags`       | CRUD (list, get, create, update, delete)                           | Protected + Admin           | Simple CRUD                                   |
-| `/admin`      | users CRUD                                                         | Protected + Admin           | User management with pagination/search        |
-| `/metrics`    | get                                                                | Public                      | Aggregate counts                              |
+| Route Group   | Endpoints                                                          | Auth                            | Notes                                                             |
+| ------------- | ------------------------------------------------------------------ | ------------------------------- | ----------------------------------------------------------------- |
+| `/auth`       | register, login, verify-email, forgot-password, reset-password, me | Public + Protected              | Email verification + password reset flows                         |
+| `/users`      | me                                                                 | Protected                       | User profile                                                      |
+| `/recordings` | CRUD + bulk download, download-all                                 | Protected (admin for write)     | S3 file upload via multer, pagination, search                     |
+| `/tags`       | CRUD (list, get, create, update, delete)                           | Protected (read), Admin (write) | Tag reads available to all authenticated users, writes admin-only |
+| `/admin`      | users CRUD                                                         | Protected + Admin               | User management with pagination/search                            |
+| `/metrics`    | get                                                                | Public                          | Aggregate counts                                                  |
 
 ### Data Models
 

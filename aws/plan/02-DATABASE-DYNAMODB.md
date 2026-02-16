@@ -215,6 +215,135 @@ To support "get all recordings for a tag" (inverse lookup), we store relationshi
 
 ---
 
+## Pagination Strategy
+
+### DynamoDB Cursor-Based Pagination
+
+DynamoDB uses **cursor-based pagination** (not offset/limit like SQL). This is a key difference from the legacy PostgreSQL implementation.
+
+#### How DynamoDB pagination works
+
+1. Client requests the first page: `Query` or `Scan` with optional `Limit` parameter
+2. DynamoDB returns up to `Limit` items + a `LastEvaluatedKey` (opaque cursor)
+3. Client requests the next page by passing `LastEvaluatedKey` as `ExclusiveStartKey`
+4. Repeat until `LastEvaluatedKey` is absent (no more pages)
+
+**Key differences from SQL offset/limit**:
+
+- No page numbers — can't jump to page 5 directly
+- No total count without a separate Scan (expensive)
+- Cursors are opaque — can't be constructed by the client
+- More efficient — DynamoDB doesn't scan skipped rows
+
+### API Response Format
+
+To maintain frontend compatibility, we translate DynamoDB cursors into a consistent pagination envelope:
+
+```json
+{
+  "data": [...],
+  "pagination": {
+    "limit": 20,
+    "nextCursor": "base64-encoded-LastEvaluatedKey",
+    "hasMore": true
+  }
+}
+```
+
+**Request parameters**:
+
+- `limit` (default 20, max 100) — how many items to return
+- `cursor` (optional) — opaque string from previous response's `nextCursor`
+
+**Response fields**:
+
+- `data` — array of items
+- `pagination.limit` — the limit used for this request
+- `pagination.nextCursor` — cursor for the next page (absent if no more pages)
+- `pagination.hasMore` — boolean indicating if more pages exist
+
+### Implementation Pattern
+
+```typescript
+// In Lambda handler
+const result = await docClient.send(
+  new QueryCommand({
+    TableName: TABLE_NAME,
+    IndexName: "GSI2",
+    KeyConditionExpression: "GSI2PK = :pk",
+    ExpressionAttributeValues: { ":pk": "RECORDINGS" },
+    Limit: limit,
+    ExclusiveStartKey: cursor
+      ? JSON.parse(Buffer.from(cursor, "base64").toString())
+      : undefined,
+    ScanIndexForward: false, // descending order (newest first)
+  }),
+);
+
+return {
+  statusCode: 200,
+  body: JSON.stringify({
+    data: result.Items,
+    pagination: {
+      limit,
+      nextCursor: result.LastEvaluatedKey
+        ? Buffer.from(JSON.stringify(result.LastEvaluatedKey)).toString(
+            "base64",
+          )
+        : undefined,
+      hasMore: !!result.LastEvaluatedKey,
+    },
+  }),
+};
+```
+
+### Endpoints Using Pagination
+
+| Endpoint            | DynamoDB Operation  | Default Limit | Notes                                  |
+| ------------------- | ------------------- | ------------- | -------------------------------------- |
+| `GET /recordings`   | GSI2 Query          | 20            | Sorted by creation date (newest first) |
+| `GET /tags`         | Scan                | 50            | Small dataset, higher limit acceptable |
+| `GET /admin/users`  | Scan                | 20            | Admin-only, filter by `entity = USER`  |
+| `GET /recordings?q` | GSI2 Query + filter | 20            | Search applies filter after query      |
+
+### Search Considerations
+
+**Case sensitivity**: DynamoDB's `contains()` filter is **case-sensitive**. To support case-insensitive search:
+
+**Option A**: Store a lowercase copy of searchable fields
+
+```typescript
+// When creating/updating a recording
+{
+  title: "Jaguar Roar",
+  titleLower: "jaguar roar", // for searching
+  // ...
+}
+// Search query
+FilterExpression: "contains(titleLower, :q)"
+```
+
+**Option B**: Accept case-sensitive search (simpler, less storage)
+
+- Document this limitation for users
+- Consider adding full-text search (OpenSearch/Algolia) later if needed
+
+**Recommendation**: Start with **Option B** (case-sensitive) to avoid data duplication. Add Option A or a dedicated search service only if users complain.
+
+### Total Count (Expensive)
+
+Getting a total count of items requires a separate Scan with `Select: 'COUNT'`. This is **expensive** for large datasets and should be avoided in pagination responses.
+
+**If total count is needed** (e.g., for "Showing 1-20 of 150"):
+
+- Cache the count in Lambda memory with a 5-minute TTL
+- Update count asynchronously (DynamoDB Streams → Lambda → cache)
+- Accept that the count may be slightly stale
+
+**Recommendation**: Don't include total count in pagination responses initially. Use `hasMore` boolean instead. Add count later only if the frontend requires it.
+
+---
+
 ## CDK Stack Design
 
 The `database-stack.ts` will create:

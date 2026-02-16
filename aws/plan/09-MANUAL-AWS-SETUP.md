@@ -229,8 +229,8 @@ After CDK deploys the API Gateway custom domain, you need to point your DNS to i
 
 - [ ] Create a budget:
   - Name: `voces-dev-monthly`
-  - Amount: $150 (dev environment)
-  - Alert at 80% ($120) and 100% ($150)
+  - Amount: $15 (dev environment)
+  - Alert at 80% ($12) and 100% ($15)
   - Notification email: your email
 - [ ] Create a budget:
   - Name: `voces-prod-monthly`
@@ -269,6 +269,140 @@ After the initial setup is working, replace `AdministratorAccess` with a scoped 
   - S3 bucket: auto-create
   - Log file validation: Enabled
 - [ ] This logs all API calls to your AWS account for security auditing
+
+---
+
+## Phase 4: Initial Data Seeding
+
+After the infrastructure is deployed, you need to seed initial data to make the system usable.
+
+### 14. Create First Admin User
+
+**Where**: AWS Console → Cognito + Manual script
+
+Since this is a **greenfield deployment** (no data migration from legacy), you need to create the first admin user manually.
+
+**Option A: Via AWS Console (Quick start)**
+
+1. Go to Cognito → User Pools → `voces-dev-user-pool`
+2. Click "Create user"
+3. Username type: Email
+4. Email: `admin@vocesdelaextincion.com`
+5. Temporary password: (auto-generate)
+6. Mark email as verified: Yes
+7. Click "Create user"
+8. Note the user's `sub` (UUID)
+9. Go to "Users" → Select the user → "Actions" → "Edit attributes"
+10. Add custom attributes:
+    - `custom:role` = `ADMIN`
+    - `custom:plan` = `PREMIUM`
+11. Create corresponding DynamoDB item via AWS CLI:
+
+```bash
+aws dynamodb put-item \
+  --table-name voces-dev-main \
+  --item '{
+    "PK": {"S": "USER#<sub-from-cognito>"},
+    "SK": {"S": "USER#<sub-from-cognito>"},
+    "GSI1PK": {"S": "USEREMAIL#admin@vocesdelaextincion.com"},
+    "GSI1SK": {"S": "USER#<sub-from-cognito>"},
+    "email": {"S": "admin@vocesdelaextincion.com"},
+    "plan": {"S": "PREMIUM"},
+    "role": {"S": "ADMIN"},
+    "createdAt": {"S": "2025-01-15T10:00:00.000Z"},
+    "updatedAt": {"S": "2025-01-15T10:00:00.000Z"},
+    "entity": {"S": "USER"}
+  }'
+```
+
+**Option B: Via Seeding Script (Recommended for repeatability)**
+
+Create a script in `aws/scripts/seed-admin.ts`:
+
+```typescript
+import {
+  CognitoIdentityProviderClient,
+  AdminCreateUserCommand,
+  AdminUpdateUserAttributesCommand,
+} from "@aws-sdk/client-cognito-identity-provider";
+import { DynamoDBDocumentClient, PutCommand } from "@aws-sdk/lib-dynamodb";
+
+const cognitoClient = new CognitoIdentityProviderClient({});
+const docClient = DynamoDBDocumentClient.from(new DynamoDBClient({}));
+
+const userPoolId = process.env.USER_POOL_ID!;
+const tableName = process.env.TABLE_NAME!;
+const adminEmail = "admin@vocesdelaextincion.com";
+
+// 1. Create user in Cognito
+const createResult = await cognitoClient.send(
+  new AdminCreateUserCommand({
+    UserPoolId: userPoolId,
+    Username: adminEmail,
+    UserAttributes: [
+      { Name: "email", Value: adminEmail },
+      { Name: "email_verified", Value: "true" },
+      { Name: "custom:role", Value: "ADMIN" },
+      { Name: "custom:plan", Value: "PREMIUM" },
+    ],
+    MessageAction: "SUPPRESS", // Don't send welcome email
+  }),
+);
+
+const sub = createResult.User?.Attributes?.find(
+  (attr) => attr.Name === "sub",
+)?.Value!;
+
+// 2. Create user in DynamoDB
+await docClient.send(
+  new PutCommand({
+    TableName: tableName,
+    Item: {
+      PK: `USER#${sub}`,
+      SK: `USER#${sub}`,
+      GSI1PK: `USEREMAIL#${adminEmail}`,
+      GSI1SK: `USER#${sub}`,
+      email: adminEmail,
+      plan: "PREMIUM",
+      role: "ADMIN",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      entity: "USER",
+    },
+  }),
+);
+
+console.log(`Admin user created: ${adminEmail} (sub: ${sub})`);
+```
+
+Run the script:
+
+```bash
+cd aws/scripts
+USER_POOL_ID=<pool-id> TABLE_NAME=voces-dev-main npx ts-node seed-admin.ts
+```
+
+### 15. Upload Initial Free Recordings
+
+**Where**: Manual upload via admin panel (after it's built) or script
+
+The 10 free recordings that non-premium users can access need to be uploaded and marked with `isFree: true`.
+
+**Steps**:
+
+1. Prepare 10 audio files (MP3, WAV, etc.)
+2. Use the admin account to upload via `POST /recordings` with `isFree: true`
+3. Or use a seeding script that uploads to S3 and creates DynamoDB items
+
+**Note**: This step happens **after** the API is deployed and functional. It's not a prerequisite for deployment.
+
+### Seeding Checklist
+
+- [ ] First admin user created in Cognito
+- [ ] First admin user created in DynamoDB (with matching `sub`)
+- [ ] Admin user can log in via `POST /auth/login`
+- [ ] (Optional) Initial free recordings uploaded
+- [ ] Tags will be created by users via `POST /tags` as needed
 
 ---
 

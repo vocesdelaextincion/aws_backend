@@ -83,6 +83,44 @@ Each Lambda that needs S3 access gets a scoped IAM policy:
 | Delete Recording | `s3:DeleteObject`                           |
 | Read Recording   | `s3:GetObject` (to generate presigned URLs) |
 
+### 4. CORS Configuration
+
+S3 CORS must be configured to allow the frontend to download files via presigned URLs using `fetch()` or XHR.
+
+```typescript
+bucket.addCorsRule({
+  allowedOrigins: corsOrigins, // env-specific
+  allowedMethods: [s3.HttpMethods.GET, s3.HttpMethods.HEAD],
+  allowedHeaders: ["*"],
+  exposedHeaders: ["ETag", "Content-Length", "Content-Type"],
+  maxAge: 3600,
+});
+```
+
+**Environment-specific CORS origins**:
+
+| Environment | Allowed Origins                                                        |
+| ----------- | ---------------------------------------------------------------------- |
+| Dev         | `http://localhost:3000`, `http://localhost:5173` (common dev ports)    |
+| Prod        | `https://vocesdelaextincion.com`, `https://www.vocesdelaextincion.com` |
+
+**Why CORS is needed for presigned URLs**:
+
+When the frontend uses `fetch()` to download a file from a presigned S3 URL, the browser enforces CORS. Even though the URL is signed and authorized, S3 must respond with `Access-Control-Allow-Origin` headers matching the frontend's origin.
+
+**Methods allowed**:
+
+- `GET` — Download files via presigned URLs
+- `HEAD` — Check file existence/metadata (optional, but useful)
+
+**Headers exposed**:
+
+- `ETag` — For caching
+- `Content-Length` — For progress bars
+- `Content-Type` — For proper file handling
+
+**Note**: If the frontend downloads files by navigating to the presigned URL (e.g., `<a href={presignedUrl} download>`), CORS is not required. CORS is only needed for XHR/fetch downloads.
+
 ### Stack Outputs
 
 - `BucketName`
@@ -238,6 +276,14 @@ The `Recording` model changes:
 Recording: id, title, description?, fileKey (unique), metadata (Json?),
            isFree (default false), tags[], createdAt, updatedAt
 ```
+
+**`isFree` field lifecycle**:
+
+- Set by admins at recording creation time via `POST /recordings` (include `isFree: true` in request body)
+- Can be toggled later via `PUT /recordings/{id}` (admin-only)
+- Defaults to `false` if not specified
+- Used by the recordings Lambda to enforce plan-based access control
+- Validation: Must be a boolean, cannot be null/undefined (Zod schema enforces this)
 
 ---
 

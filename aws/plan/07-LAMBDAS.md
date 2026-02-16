@@ -211,7 +211,98 @@ export const error = (message: string, statusCode = 400) => ({
   headers: { "Content-Type": "application/json" },
   body: JSON.stringify({ message }),
 });
+
+export const validationError = (
+  errors: Array<{ field: string; message: string }>,
+  statusCode = 400,
+) => ({
+  statusCode,
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ errors }),
+});
 ```
+
+#### Error Response Contract
+
+To maintain frontend compatibility, all error responses follow a consistent format. This is critical for preserving the API contract (Guiding Principle #7).
+
+**Single error format** (used for business logic errors, auth failures, not found, etc.):
+
+```json
+{
+  "message": "Error description here"
+}
+```
+
+**Validation error format** (used for input validation failures):
+
+```json
+{
+  "errors": [
+    {
+      "field": "email",
+      "message": "Please provide a valid email address."
+    },
+    {
+      "field": "password",
+      "message": "Password must be at least 8 characters long."
+    }
+  ]
+}
+```
+
+**HTTP Status Codes**:
+
+| Code  | When                                              | Example Response                                            |
+| ----- | ------------------------------------------------- | ----------------------------------------------------------- |
+| `200` | Success                                           | `{ "data": {...} }` or `{ "message": "Success" }`           |
+| `201` | Resource created                                  | `{ "data": {...}, "message": "User created successfully" }` |
+| `400` | Validation error or bad request                   | `{ "errors": [...] }` or `{ "message": "Invalid request" }` |
+| `401` | Unauthorized (no token or invalid token)          | `{ "message": "Unauthorized" }` (from API Gateway)          |
+| `403` | Forbidden (valid token, insufficient permissions) | `{ "message": "Not authorized as an admin" }`               |
+| `404` | Resource not found                                | `{ "message": "Recording not found" }`                      |
+| `409` | Conflict (e.g., email already exists)             | `{ "message": "Email already in use" }`                     |
+| `500` | Internal server error                             | `{ "message": "Internal server error" }`                    |
+
+**Zod Validation Error Translation**:
+
+When Zod validation fails, translate the Zod error format to the API contract format:
+
+```typescript
+// Zod validation
+const parsed = registerSchema.safeParse(body);
+if (!parsed.success) {
+  const errors = parsed.error.issues.map((issue) => ({
+    field: issue.path.join("."),
+    message: issue.message,
+  }));
+  return validationError(errors);
+}
+```
+
+**Example Zod → API translation**:
+
+```typescript
+// Zod error
+{
+  issues: [
+    { path: ['email'], message: 'Invalid email' },
+    { path: ['password'], message: 'String must contain at least 8 character(s)' }
+  ]
+}
+
+// Becomes API response
+{
+  "errors": [
+    { "field": "email", "message": "Invalid email" },
+    { "field": "password", "message": "String must contain at least 8 character(s)" }
+  ]
+}
+```
+
+**Legacy express-validator compatibility**:
+
+The legacy API uses express-validator, which returns errors in a similar format. The Zod translation above maintains compatibility. If the legacy format differs, adjust the translation accordingly.
 
 ### 2. Extracting User from Cognito Authorizer
 

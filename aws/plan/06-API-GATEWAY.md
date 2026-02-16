@@ -68,34 +68,36 @@ Prod: https://api.vocesdelaextincion.com  (custom domain)
 
 ### Full Route Table
 
-| Method   | Route                          | Lambda Target            | Authorizer  | Notes                                        |
-| -------- | ------------------------------ | ------------------------ | ----------- | -------------------------------------------- |
-| `POST`   | `/auth/register`               | `voces-{env}-auth`       | None        | Public                                       |
-| `POST`   | `/auth/login`                  | `voces-{env}-auth`       | None        | Public                                       |
-| `POST`   | `/auth/verify-email/{token}`   | `voces-{env}-auth`       | None        | Public                                       |
-| `POST`   | `/auth/forgot-password`        | `voces-{env}-auth`       | None        | Public                                       |
-| `POST`   | `/auth/reset-password/{token}` | `voces-{env}-auth`       | None        | Public                                       |
-| `GET`    | `/auth/me`                     | `voces-{env}-auth`       | Cognito JWT | Protected                                    |
-| `GET`    | `/users/me`                    | `voces-{env}-users`      | Cognito JWT | Protected                                    |
-| `GET`    | `/recordings`                  | `voces-{env}-recordings` | Cognito JWT | Protected                                    |
-| `POST`   | `/recordings`                  | `voces-{env}-recordings` | Cognito JWT | Protected (admin enforced in Lambda)         |
-| `GET`    | `/recordings/{id}`             | `voces-{env}-recordings` | Cognito JWT | Protected                                    |
-| `POST`   | `/recordings/download`         | `voces-{env}-recordings` | Cognito JWT | Protected (plan-based access in Lambda)      |
-| `POST`   | `/recordings/download-all`     | `voces-{env}-recordings` | Cognito JWT | Protected (PREMIUM only, enforced in Lambda) |
-| `PUT`    | `/recordings/{id}`             | `voces-{env}-recordings` | Cognito JWT | Protected (admin enforced in Lambda)         |
-| `DELETE` | `/recordings/{id}`             | `voces-{env}-recordings` | Cognito JWT | Protected (admin enforced in Lambda)         |
-| `GET`    | `/tags`                        | `voces-{env}-tags`       | Cognito JWT | Protected (admin enforced in Lambda)         |
-| `POST`   | `/tags`                        | `voces-{env}-tags`       | Cognito JWT | Protected (admin enforced in Lambda)         |
-| `GET`    | `/tags/{id}`                   | `voces-{env}-tags`       | Cognito JWT | Protected (admin enforced in Lambda)         |
-| `PUT`    | `/tags/{id}`                   | `voces-{env}-tags`       | Cognito JWT | Protected (admin enforced in Lambda)         |
-| `DELETE` | `/tags/{id}`                   | `voces-{env}-tags`       | Cognito JWT | Protected (admin enforced in Lambda)         |
-| `GET`    | `/admin/users`                 | `voces-{env}-admin`      | Cognito JWT | Protected (admin enforced in Lambda)         |
-| `GET`    | `/admin/users/{id}`            | `voces-{env}-admin`      | Cognito JWT | Protected (admin enforced in Lambda)         |
-| `PUT`    | `/admin/users/{id}`            | `voces-{env}-admin`      | Cognito JWT | Protected (admin enforced in Lambda)         |
-| `DELETE` | `/admin/users/{id}`            | `voces-{env}-admin`      | Cognito JWT | Protected (admin enforced in Lambda)         |
-| `GET`    | `/metrics`                     | `voces-{env}-metrics`    | None        | Public                                       |
+| Method   | Route                      | Lambda Target            | Authorizer  | Notes                                        |
+| -------- | -------------------------- | ------------------------ | ----------- | -------------------------------------------- |
+| `POST`   | `/auth/register`           | `voces-{env}-auth`       | None        | Public                                       |
+| `POST`   | `/auth/login`              | `voces-{env}-auth`       | None        | Public                                       |
+| `POST`   | `/auth/verify-email`       | `voces-{env}-auth`       | None        | Public (code in body, not URL)               |
+| `POST`   | `/auth/forgot-password`    | `voces-{env}-auth`       | None        | Public                                       |
+| `POST`   | `/auth/reset-password`     | `voces-{env}-auth`       | None        | Public (code in body, not URL)               |
+| `GET`    | `/auth/me`                 | `voces-{env}-auth`       | Cognito JWT | Protected                                    |
+| `GET`    | `/users/me`                | `voces-{env}-users`      | Cognito JWT | Protected (alias for /auth/me, deprecated)   |
+| `GET`    | `/recordings`              | `voces-{env}-recordings` | Cognito JWT | Protected                                    |
+| `POST`   | `/recordings`              | `voces-{env}-recordings` | Cognito JWT | Protected (admin enforced in Lambda)         |
+| `GET`    | `/recordings/{id}`         | `voces-{env}-recordings` | Cognito JWT | Protected                                    |
+| `POST`   | `/recordings/download`     | `voces-{env}-recordings` | Cognito JWT | Protected (plan-based access in Lambda)      |
+| `POST`   | `/recordings/download-all` | `voces-{env}-recordings` | Cognito JWT | Protected (PREMIUM only, enforced in Lambda) |
+| `PUT`    | `/recordings/{id}`         | `voces-{env}-recordings` | Cognito JWT | Protected (admin enforced in Lambda)         |
+| `DELETE` | `/recordings/{id}`         | `voces-{env}-recordings` | Cognito JWT | Protected (admin enforced in Lambda)         |
+| `GET`    | `/tags`                    | `voces-{env}-tags`       | Cognito JWT | Protected (all authenticated users)          |
+| `POST`   | `/tags`                    | `voces-{env}-tags`       | Cognito JWT | Protected (admin enforced in Lambda)         |
+| `GET`    | `/tags/{id}`               | `voces-{env}-tags`       | Cognito JWT | Protected (all authenticated users)          |
+| `PUT`    | `/tags/{id}`               | `voces-{env}-tags`       | Cognito JWT | Protected (admin enforced in Lambda)         |
+| `DELETE` | `/tags/{id}`               | `voces-{env}-tags`       | Cognito JWT | Protected (admin enforced in Lambda)         |
+| `GET`    | `/admin/users`             | `voces-{env}-admin`      | Cognito JWT | Protected (admin enforced in Lambda)         |
+| `GET`    | `/admin/users/{id}`        | `voces-{env}-admin`      | Cognito JWT | Protected (admin enforced in Lambda)         |
+| `PUT`    | `/admin/users/{id}`        | `voces-{env}-admin`      | Cognito JWT | Protected (admin enforced in Lambda)         |
+| `DELETE` | `/admin/users/{id}`        | `voces-{env}-admin`      | Cognito JWT | Protected (admin enforced in Lambda)         |
+| `GET`    | `/metrics`                 | `voces-{env}-metrics`    | None        | Public                                       |
 
-**Total: 24 routes → 6 Lambda targets.**
+**Total: 22 routes → 6 Lambda targets.**
+
+**Note on `/auth/me` vs `/users/me`**: Both endpoints return the current user's profile. `/users/me` is maintained for backward compatibility with the legacy API but is considered deprecated. New frontend code should use `/auth/me`.
 
 ### Authorization Strategy (Two Layers)
 
