@@ -85,21 +85,39 @@ This allows GitHub Actions to assume an AWS role without long-lived access keys.
 - [ ] Trusted entity type: **Web identity**
 - [ ] Identity provider: `token.actions.githubusercontent.com`
 - [ ] Audience: `sts.amazonaws.com`
-- [ ] Add a condition to scope to your repo:
-  - Key: `token.actions.githubusercontent.com:sub`
-  - Condition: `StringLike`
-  - Value: `repo:<GITHUB_ORG>/<REPO_NAME>:*`
+- [ ] Scope to your repo (AWS now shows individual fields instead of raw condition inputs):
+  - **GitHub organization**: `vocesdelaextincion`
+  - **GitHub repository**: `aws_backend`
+  - **GitHub branch**: `dev`
 - [ ] Permissions: Attach `AdministratorAccess` for initial setup
   - **Important**: Scope this down later to only the permissions CDK needs
 - [ ] Role name: `voces-github-actions-dev`
 - [ ] Note the Role ARN: `arn:aws:iam::<ACCOUNT_ID>:role/voces-github-actions-dev`
+- [ ] Verify the trust policy `StringLike` block looks like this (AWS may auto-generate it correctly):
+  ```json
+  "StringLike": {
+    "token.actions.githubusercontent.com:sub": "repo:vocesdelaextincion/aws_backend:ref:refs/heads/dev"
+  }
+  ```
 
 **Step 3: Create the IAM role for GitHub Actions (prod)**
 
-- [ ] Repeat Step 2 with:
-  - Condition value: `repo:<GITHUB_ORG>/<REPO_NAME>:ref:refs/heads/main` (or tag pattern for releases)
+- [ ] Repeat Step 2 with these differences:
+  - **GitHub organization**: `vocesdelaextincion`
+  - **GitHub repository**: `aws_backend`
+  - **GitHub branch**: `main` (we'll tighten this to tags after creation)
   - Role name: `voces-github-actions-prod`
   - Note the Role ARN
+- [ ] After role creation, edit the trust policy to restrict to tag releases only:
+  - In IAM → Roles → `voces-github-actions-prod` → Trust relationships → Edit trust policy
+  - Find the `StringLike` block and replace its contents so it looks like this:
+    ```json
+    "StringLike": {
+      "token.actions.githubusercontent.com:sub": "repo:vocesdelaextincion/aws_backend:ref:refs/tags/v*"
+    }
+    ```
+  - This restricts prod deploys to tags matching `v*` (e.g. `v1.0.0`, `v2.3.1`)
+  - AWS will warn about the wildcard in `v*` — this is safe to ignore; the repo path is already fully scoped
 
 ### 5. GitHub Repository Configuration
 

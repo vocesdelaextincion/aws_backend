@@ -1,0 +1,94 @@
+name: Deploy Lambdas
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'aws/lambdas/**'
+      - '.github/workflows/deploy-lambdas.yml'
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy-lambdas-dev:
+    name: Deploy Lambda Code to Dev
+    runs-on: ubuntu-latest
+    environment: development
+    defaults:
+      run:
+        working-directory: aws/lambdas
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: aws/lambdas/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm test
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN_DEV }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Build lambdas
+        run: npm run build
+
+      - name: Deploy via CDK (Lambda code update)
+        working-directory: aws/infra
+        run: |
+          npm ci
+          npm run deploy -- voces-dev-api -c env=dev --require-approval never
+
+  deploy-lambdas-prod:
+    name: Deploy Lambda Code to Prod
+    runs-on: ubuntu-latest
+    environment: production
+    needs: deploy-lambdas-dev
+    defaults:
+      run:
+        working-directory: aws/lambdas
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: aws/lambdas/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm test
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN_PROD }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Build lambdas
+        run: npm run build
+
+      - name: Deploy via CDK (Lambda code update)
+        working-directory: aws/infra
+        run: |
+          npm ci
+          npm run deploy -- voces-prod-api -c env=prod --require-approval never
