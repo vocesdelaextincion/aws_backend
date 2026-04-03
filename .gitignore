@@ -143,3 +143,6 @@ cdk.out/
 
 # TypeScript build output
 dist/
+
+.claude
+CLAUDE.md
