@@ -1,9 +1,16 @@
 import * as cdk from 'aws-cdk-lib';
 import * as cognito from 'aws-cdk-lib/aws-cognito';
+import * as lambda from 'aws-cdk-lib/aws-lambda';
 import { Construct } from 'constructs';
 
 export interface AuthStackProps extends cdk.StackProps {
   appEnv: string;
+  // The FROM address Cognito uses when sending via SES.
+  // Must match (or belong to) the verified SES identity.
+  sesFromEmail: string;
+  // Set only for domain identities (prod). Tells Cognito the domain was verified
+  // at the domain level rather than as a single address.
+  sesVerifiedDomain?: string;
 }
 
 export class AuthStack extends cdk.Stack {
@@ -14,6 +21,53 @@ export class AuthStack extends cdk.Stack {
     super(scope, id, props);
 
     const isProd = props.appEnv === 'prod';
+
+    // Cognito invokes this Lambda before sending a verification or reset email,
+    // letting us replace the default plain-text body with branded HTML.
+    // Written as inline JavaScript so it deploys with the infra stack — no separate
+    // Lambda build pipeline needed for what is just a string-templating function.
+    const customMessageFn = new lambda.Function(this, 'CustomMessageFn', {
+      functionName: `voces-${props.appEnv}-cognito-custom-message`,
+      runtime: lambda.Runtime.NODEJS_22_X,
+      handler: 'index.handler',
+      code: lambda.Code.fromInline(`
+exports.handler = async function(event) {
+  var code = event.request.codeParameter || event.request.temporaryPassword || '';
+
+  if (
+    event.triggerSource === 'CustomMessage_SignUp' ||
+    event.triggerSource === 'CustomMessage_ResendCode'
+  ) {
+    event.response.emailSubject = 'Voces de la Extincion - Verify your email';
+    event.response.emailMessage =
+      '<h2>Welcome to Voces de la Extincion!</h2>' +
+      '<p>Your verification code is:</p>' +
+      '<h1 style="letter-spacing:4px;font-family:monospace;">' + code + '</h1>' +
+      '<p>This code expires in 24 hours.</p>';
+  } else if (event.triggerSource === 'CustomMessage_ForgotPassword') {
+    event.response.emailSubject = 'Voces de la Extincion - Reset your password';
+    event.response.emailMessage =
+      '<h2>Password Reset</h2>' +
+      '<p>Your password reset code is:</p>' +
+      '<h1 style="letter-spacing:4px;font-family:monospace;">' + code + '</h1>' +
+      '<p>This code expires in 1 hour. If you did not request this, you can ignore this email.</p>';
+  } else if (event.triggerSource === 'CustomMessage_AdminCreateUser') {
+    event.response.emailSubject = 'Voces de la Extincion - Your account';
+    event.response.emailMessage =
+      '<h2>Your account has been created</h2>' +
+      '<p>Your temporary password is:</p>' +
+      '<h1 style="letter-spacing:4px;font-family:monospace;">' + code + '</h1>' +
+      '<p>Please log in and change your password immediately.</p>';
+  }
+
+  return event;
+};
+      `),
+      // Cold starts on this function directly delay the auth flow, so keep it warm.
+      // 128 MB is the minimum and more than enough for pure string operations.
+      memorySize: 128,
+      timeout: cdk.Duration.seconds(5),
+    });
 
     // Replaces legacy custom JWT + bcrypt. Cognito handles password hashing,
     // email verification codes, password reset codes, and token issuance.
@@ -56,8 +110,23 @@ export class AuthStack extends cdk.Stack {
         emailBody: 'Your verification code is {####}. It expires in 24 hours.',
       },
 
-      // TODO (Part 5): Switch to SES for prod to raise sending limits and use a custom domain.
-      // email: cognito.UserPoolEmail.withSES({ ... })
+      // Route Cognito emails through SES. This removes the default 50 emails/day limit
+      // and lets us send from our own domain. The identity must be verified in SES
+      // before Cognito can use it (manual step — see plan/09-MANUAL-AWS-SETUP.md).
+      email: cognito.UserPoolEmail.withSES({
+        fromEmail: props.sesFromEmail,
+        fromName: 'Voces de la Extinción',
+        replyTo: props.sesFromEmail,
+        // Required for domain identities (prod). Omit for email address identities (dev).
+        sesVerifiedDomain: props.sesVerifiedDomain,
+        // SES must be in the same region as the User Pool.
+        sesRegion: cdk.Stack.of(this).region,
+      }),
+
+      // Branded HTML emails via the Custom Message Lambda trigger.
+      lambdaTriggers: {
+        customMessage: customMessageFn,
+      },
 
       removalPolicy: isProd ? cdk.RemovalPolicy.RETAIN : cdk.RemovalPolicy.DESTROY,
       deletionProtection: isProd,

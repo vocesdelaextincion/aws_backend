@@ -16,6 +16,9 @@ if (!env || !["dev", "prod"].includes(env)) {
 const envConfig = app.node.tryGetContext("environments")[env] as {
   account: string;
   region: string;
+  sesIdentity: string;
+  sesFromEmail: string;
+  sesVerifiedDomain?: string;
 };
 
 const awsEnv: cdk.Environment = {
@@ -33,13 +36,6 @@ const databaseStack = new DatabaseStack(app, `${stackPrefix}-database`, {
   appEnv: env,
 });
 
-const authStack = new AuthStack(app, `${stackPrefix}-auth`, {
-  env: awsEnv,
-  stackName: `${stackPrefix}-auth`,
-  tags,
-  appEnv: env,
-});
-
 const storageStack = new StorageStack(app, `${stackPrefix}-storage`, {
   env: awsEnv,
   stackName: `${stackPrefix}-storage`,
@@ -47,11 +43,23 @@ const storageStack = new StorageStack(app, `${stackPrefix}-storage`, {
   appEnv: env,
 });
 
+// EmailStack must come before AuthStack — AuthStack needs SES configured
+// before Cognito can be told to route emails through it.
 const emailStack = new EmailStack(app, `${stackPrefix}-email`, {
   env: awsEnv,
   stackName: `${stackPrefix}-email`,
   tags,
   appEnv: env,
+  sesIdentity: envConfig.sesIdentity,
+});
+
+const authStack = new AuthStack(app, `${stackPrefix}-auth`, {
+  env: awsEnv,
+  stackName: `${stackPrefix}-auth`,
+  tags,
+  appEnv: env,
+  sesFromEmail: envConfig.sesFromEmail,
+  sesVerifiedDomain: envConfig.sesVerifiedDomain,
 });
 
 new ApiStack(app, `${stackPrefix}-api`, {
