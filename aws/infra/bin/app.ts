@@ -5,6 +5,7 @@ import { AuthStack } from "../lib/stacks/auth-stack";
 import { StorageStack } from "../lib/stacks/storage-stack";
 import { EmailStack } from "../lib/stacks/email-stack";
 import { ApiStack } from "../lib/stacks/api-stack";
+import { MonitoringStack } from "../lib/stacks/monitoring-stack";
 
 const app = new cdk.App();
 
@@ -19,6 +20,7 @@ const envConfig = app.node.tryGetContext("environments")[env] as {
   sesIdentity: string;
   sesFromEmail: string;
   sesVerifiedDomain?: string;
+  alertEmail?: string;
 };
 
 const awsEnv: cdk.Environment = {
@@ -62,7 +64,7 @@ const authStack = new AuthStack(app, `${stackPrefix}-auth`, {
   sesVerifiedDomain: envConfig.sesVerifiedDomain,
 });
 
-new ApiStack(app, `${stackPrefix}-api`, {
+const apiStack = new ApiStack(app, `${stackPrefix}-api`, {
   env: awsEnv,
   stackName: `${stackPrefix}-api`,
   tags,
@@ -71,6 +73,18 @@ new ApiStack(app, `${stackPrefix}-api`, {
   authStack,
   storageStack,
   emailStack,
+});
+
+new MonitoringStack(app, `${stackPrefix}-monitoring`, {
+  env: awsEnv,
+  stackName: `${stackPrefix}-monitoring`,
+  tags,
+  appEnv: env,
+  databaseStack,
+  authStack,
+  storageStack,
+  apiStack,
+  alertEmail: envConfig.alertEmail,
 });
 
 app.synth();

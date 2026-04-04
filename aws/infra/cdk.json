@@ -51,7 +51,8 @@
         "region": "us-east-1",
         "sesIdentity": "vocesdelaextincion.com",
         "sesFromEmail": "noreply@vocesdelaextincion.com",
-        "sesVerifiedDomain": "vocesdelaextincion.com"
+        "sesVerifiedDomain": "vocesdelaextincion.com",
+        "alertEmail": "REPLACE_WITH_ALERT_EMAIL"
       }
     }
   }

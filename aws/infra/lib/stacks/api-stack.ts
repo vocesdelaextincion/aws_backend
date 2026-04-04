@@ -22,6 +22,16 @@ export interface ApiStackProps extends cdk.StackProps {
 }
 
 export class ApiStack extends cdk.Stack {
+  // Exposed so MonitoringStack can create alarms and the dashboard without
+  // needing to re-declare the functions or duplicate ARNs.
+  public readonly authFn: NodejsFunction;
+  public readonly usersFn: NodejsFunction;
+  public readonly recordingsFn: NodejsFunction;
+  public readonly tagsFn: NodejsFunction;
+  public readonly adminFn: NodejsFunction;
+  public readonly metricsFn: NodejsFunction;
+  public readonly api: apigwv2.HttpApi;
+
   constructor(scope: Construct, id: string, props: ApiStackProps) {
     super(scope, id, props);
 
@@ -54,6 +64,8 @@ export class ApiStack extends cdk.Stack {
         // Target must match the Lambda runtime. Avoids polyfilling modern JS features.
         target: 'node22',
       },
+      // Explicitly set retention so CloudWatch log groups don't grow indefinitely.
+      logRetention: isProd ? logs.RetentionDays.THREE_MONTHS : logs.RetentionDays.TWO_WEEKS,
       environment: {
         TABLE_NAME: props.databaseStack.table.tableName,
         ENV: props.appEnv,
@@ -62,7 +74,7 @@ export class ApiStack extends cdk.Stack {
 
     // --- auth ---
     // Cognito SDK calls: SignUp, InitiateAuth, ConfirmSignUp, ForgotPassword, ConfirmForgotPassword.
-    const authFn = new NodejsFunction(this, 'AuthFn', {
+    this.authFn = new NodejsFunction(this, 'AuthFn', {
       functionName: `voces-${props.appEnv}-auth`,
       entry: lambdaEntry('auth'),
       handler: 'handler',
@@ -73,8 +85,8 @@ export class ApiStack extends cdk.Stack {
         COGNITO_CLIENT_ID: props.authStack.userPoolClient.userPoolClientId,
       },
     });
-    props.databaseStack.table.grantReadWriteData(authFn);
-    authFn.addToRolePolicy(new iam.PolicyStatement({
+    props.databaseStack.table.grantReadWriteData(this.authFn);
+    this.authFn.addToRolePolicy(new iam.PolicyStatement({
       actions: [
         'cognito-idp:SignUp',
         'cognito-idp:InitiateAuth',
@@ -89,17 +101,17 @@ export class ApiStack extends cdk.Stack {
 
     // --- users ---
     // Alias for /auth/me — read-only profile data from DynamoDB.
-    const usersFn = new NodejsFunction(this, 'UsersFn', {
+    this.usersFn = new NodejsFunction(this, 'UsersFn', {
       functionName: `voces-${props.appEnv}-users`,
       entry: lambdaEntry('users'),
       handler: 'handler',
       ...commonFnProps,
     });
-    props.databaseStack.table.grantReadData(usersFn);
+    props.databaseStack.table.grantReadData(this.usersFn);
 
     // --- recordings ---
     // Needs S3 for upload/delete and GetObject permission to sign presigned URLs.
-    const recordingsFn = new NodejsFunction(this, 'RecordingsFn', {
+    this.recordingsFn = new NodejsFunction(this, 'RecordingsFn', {
       functionName: `voces-${props.appEnv}-recordings`,
       entry: lambdaEntry('recordings'),
       handler: 'handler',
@@ -112,22 +124,22 @@ export class ApiStack extends cdk.Stack {
         PRESIGNED_URL_TTL_PREMIUM: '3600',  // 1 hour
       },
     });
-    props.databaseStack.table.grantReadWriteData(recordingsFn);
+    props.databaseStack.table.grantReadWriteData(this.recordingsFn);
     // PutObject (upload), DeleteObject (delete), GetObject (generate presigned URLs).
-    props.storageStack.bucket.grantReadWrite(recordingsFn);
+    props.storageStack.bucket.grantReadWrite(this.recordingsFn);
 
     // --- tags ---
-    const tagsFn = new NodejsFunction(this, 'TagsFn', {
+    this.tagsFn = new NodejsFunction(this, 'TagsFn', {
       functionName: `voces-${props.appEnv}-tags`,
       entry: lambdaEntry('tags'),
       handler: 'handler',
       ...commonFnProps,
     });
-    props.databaseStack.table.grantReadWriteData(tagsFn);
+    props.databaseStack.table.grantReadWriteData(this.tagsFn);
 
     // --- admin ---
     // Manages users: needs AdminUpdateUserAttributes and AdminDeleteUser on the pool.
-    const adminFn = new NodejsFunction(this, 'AdminFn', {
+    this.adminFn = new NodejsFunction(this, 'AdminFn', {
       functionName: `voces-${props.appEnv}-admin`,
       entry: lambdaEntry('admin'),
       handler: 'handler',
@@ -137,8 +149,8 @@ export class ApiStack extends cdk.Stack {
         COGNITO_USER_POOL_ID: props.authStack.userPool.userPoolId,
       },
     });
-    props.databaseStack.table.grantReadWriteData(adminFn);
-    adminFn.addToRolePolicy(new iam.PolicyStatement({
+    props.databaseStack.table.grantReadWriteData(this.adminFn);
+    this.adminFn.addToRolePolicy(new iam.PolicyStatement({
       actions: [
         'cognito-idp:AdminUpdateUserAttributes',
         'cognito-idp:AdminDeleteUser',
@@ -150,20 +162,20 @@ export class ApiStack extends cdk.Stack {
 
     // --- metrics ---
     // Public endpoint — aggregated counts only, no auth required.
-    const metricsFn = new NodejsFunction(this, 'MetricsFn', {
+    this.metricsFn = new NodejsFunction(this, 'MetricsFn', {
       functionName: `voces-${props.appEnv}-metrics`,
       entry: lambdaEntry('metrics'),
       handler: 'handler',
       ...commonFnProps,
     });
     // Scan-with-count only; no writes.
-    props.databaseStack.table.grantReadData(metricsFn);
+    props.databaseStack.table.grantReadData(this.metricsFn);
 
     // -------------------------------------------------------------------------
     // HTTP API
     // -------------------------------------------------------------------------
 
-    const api = new apigwv2.HttpApi(this, 'Api', {
+    this.api = new apigwv2.HttpApi(this, 'Api', {
       apiName: `voces-${props.appEnv}-api`,
       corsPreflight: {
         allowOrigins: corsOrigins,
@@ -204,53 +216,53 @@ export class ApiStack extends cdk.Stack {
     // Lambda Integrations
     // -------------------------------------------------------------------------
 
-    const authInt       = new integrations.HttpLambdaIntegration('AuthInt', authFn);
-    const usersInt      = new integrations.HttpLambdaIntegration('UsersInt', usersFn);
-    const recordingsInt = new integrations.HttpLambdaIntegration('RecordingsInt', recordingsFn);
-    const tagsInt       = new integrations.HttpLambdaIntegration('TagsInt', tagsFn);
-    const adminInt      = new integrations.HttpLambdaIntegration('AdminInt', adminFn);
-    const metricsInt    = new integrations.HttpLambdaIntegration('MetricsInt', metricsFn);
+    const authInt       = new integrations.HttpLambdaIntegration('AuthInt',       this.authFn);
+    const usersInt      = new integrations.HttpLambdaIntegration('UsersInt',      this.usersFn);
+    const recordingsInt = new integrations.HttpLambdaIntegration('RecordingsInt', this.recordingsFn);
+    const tagsInt       = new integrations.HttpLambdaIntegration('TagsInt',       this.tagsFn);
+    const adminInt      = new integrations.HttpLambdaIntegration('AdminInt',      this.adminFn);
+    const metricsInt    = new integrations.HttpLambdaIntegration('MetricsInt',    this.metricsFn);
 
     // -------------------------------------------------------------------------
     // Routes — 22 total
     // -------------------------------------------------------------------------
 
     // Auth — public routes (no authorizer)
-    api.addRoutes({ path: '/auth/register',         methods: [apigwv2.HttpMethod.POST], integration: authInt });
-    api.addRoutes({ path: '/auth/login',             methods: [apigwv2.HttpMethod.POST], integration: authInt });
-    api.addRoutes({ path: '/auth/verify-email',      methods: [apigwv2.HttpMethod.POST], integration: authInt });
-    api.addRoutes({ path: '/auth/forgot-password',   methods: [apigwv2.HttpMethod.POST], integration: authInt });
-    api.addRoutes({ path: '/auth/reset-password',    methods: [apigwv2.HttpMethod.POST], integration: authInt });
+    this.api.addRoutes({ path: '/auth/register',         methods: [apigwv2.HttpMethod.POST], integration: authInt });
+    this.api.addRoutes({ path: '/auth/login',             methods: [apigwv2.HttpMethod.POST], integration: authInt });
+    this.api.addRoutes({ path: '/auth/verify-email',      methods: [apigwv2.HttpMethod.POST], integration: authInt });
+    this.api.addRoutes({ path: '/auth/forgot-password',   methods: [apigwv2.HttpMethod.POST], integration: authInt });
+    this.api.addRoutes({ path: '/auth/reset-password',    methods: [apigwv2.HttpMethod.POST], integration: authInt });
     // Auth — protected
-    api.addRoutes({ path: '/auth/me', methods: [apigwv2.HttpMethod.GET], integration: authInt, authorizer: cognitoAuthorizer });
+    this.api.addRoutes({ path: '/auth/me', methods: [apigwv2.HttpMethod.GET], integration: authInt, authorizer: cognitoAuthorizer });
 
     // Users (deprecated alias for /auth/me — kept for backward compatibility)
-    api.addRoutes({ path: '/users/me', methods: [apigwv2.HttpMethod.GET], integration: usersInt, authorizer: cognitoAuthorizer });
+    this.api.addRoutes({ path: '/users/me', methods: [apigwv2.HttpMethod.GET], integration: usersInt, authorizer: cognitoAuthorizer });
 
     // Recordings — all protected; admin enforcement happens inside the Lambda
-    api.addRoutes({ path: '/recordings',              methods: [apigwv2.HttpMethod.GET],    integration: recordingsInt, authorizer: cognitoAuthorizer });
-    api.addRoutes({ path: '/recordings',              methods: [apigwv2.HttpMethod.POST],   integration: recordingsInt, authorizer: cognitoAuthorizer });
-    api.addRoutes({ path: '/recordings/download',     methods: [apigwv2.HttpMethod.POST],   integration: recordingsInt, authorizer: cognitoAuthorizer });
-    api.addRoutes({ path: '/recordings/download-all', methods: [apigwv2.HttpMethod.POST],   integration: recordingsInt, authorizer: cognitoAuthorizer });
-    api.addRoutes({ path: '/recordings/{id}',         methods: [apigwv2.HttpMethod.GET],    integration: recordingsInt, authorizer: cognitoAuthorizer });
-    api.addRoutes({ path: '/recordings/{id}',         methods: [apigwv2.HttpMethod.PUT],    integration: recordingsInt, authorizer: cognitoAuthorizer });
-    api.addRoutes({ path: '/recordings/{id}',         methods: [apigwv2.HttpMethod.DELETE], integration: recordingsInt, authorizer: cognitoAuthorizer });
+    this.api.addRoutes({ path: '/recordings',              methods: [apigwv2.HttpMethod.GET],    integration: recordingsInt, authorizer: cognitoAuthorizer });
+    this.api.addRoutes({ path: '/recordings',              methods: [apigwv2.HttpMethod.POST],   integration: recordingsInt, authorizer: cognitoAuthorizer });
+    this.api.addRoutes({ path: '/recordings/download',     methods: [apigwv2.HttpMethod.POST],   integration: recordingsInt, authorizer: cognitoAuthorizer });
+    this.api.addRoutes({ path: '/recordings/download-all', methods: [apigwv2.HttpMethod.POST],   integration: recordingsInt, authorizer: cognitoAuthorizer });
+    this.api.addRoutes({ path: '/recordings/{id}',         methods: [apigwv2.HttpMethod.GET],    integration: recordingsInt, authorizer: cognitoAuthorizer });
+    this.api.addRoutes({ path: '/recordings/{id}',         methods: [apigwv2.HttpMethod.PUT],    integration: recordingsInt, authorizer: cognitoAuthorizer });
+    this.api.addRoutes({ path: '/recordings/{id}',         methods: [apigwv2.HttpMethod.DELETE], integration: recordingsInt, authorizer: cognitoAuthorizer });
 
     // Tags — all protected; admin enforcement inside Lambda for write operations
-    api.addRoutes({ path: '/tags',      methods: [apigwv2.HttpMethod.GET],    integration: tagsInt, authorizer: cognitoAuthorizer });
-    api.addRoutes({ path: '/tags',      methods: [apigwv2.HttpMethod.POST],   integration: tagsInt, authorizer: cognitoAuthorizer });
-    api.addRoutes({ path: '/tags/{id}', methods: [apigwv2.HttpMethod.GET],    integration: tagsInt, authorizer: cognitoAuthorizer });
-    api.addRoutes({ path: '/tags/{id}', methods: [apigwv2.HttpMethod.PUT],    integration: tagsInt, authorizer: cognitoAuthorizer });
-    api.addRoutes({ path: '/tags/{id}', methods: [apigwv2.HttpMethod.DELETE], integration: tagsInt, authorizer: cognitoAuthorizer });
+    this.api.addRoutes({ path: '/tags',      methods: [apigwv2.HttpMethod.GET],    integration: tagsInt, authorizer: cognitoAuthorizer });
+    this.api.addRoutes({ path: '/tags',      methods: [apigwv2.HttpMethod.POST],   integration: tagsInt, authorizer: cognitoAuthorizer });
+    this.api.addRoutes({ path: '/tags/{id}', methods: [apigwv2.HttpMethod.GET],    integration: tagsInt, authorizer: cognitoAuthorizer });
+    this.api.addRoutes({ path: '/tags/{id}', methods: [apigwv2.HttpMethod.PUT],    integration: tagsInt, authorizer: cognitoAuthorizer });
+    this.api.addRoutes({ path: '/tags/{id}', methods: [apigwv2.HttpMethod.DELETE], integration: tagsInt, authorizer: cognitoAuthorizer });
 
     // Admin — all protected; role check (ADMIN-only) enforced inside Lambda
-    api.addRoutes({ path: '/admin/users',      methods: [apigwv2.HttpMethod.GET],    integration: adminInt, authorizer: cognitoAuthorizer });
-    api.addRoutes({ path: '/admin/users/{id}', methods: [apigwv2.HttpMethod.GET],    integration: adminInt, authorizer: cognitoAuthorizer });
-    api.addRoutes({ path: '/admin/users/{id}', methods: [apigwv2.HttpMethod.PUT],    integration: adminInt, authorizer: cognitoAuthorizer });
-    api.addRoutes({ path: '/admin/users/{id}', methods: [apigwv2.HttpMethod.DELETE], integration: adminInt, authorizer: cognitoAuthorizer });
+    this.api.addRoutes({ path: '/admin/users',      methods: [apigwv2.HttpMethod.GET],    integration: adminInt, authorizer: cognitoAuthorizer });
+    this.api.addRoutes({ path: '/admin/users/{id}', methods: [apigwv2.HttpMethod.GET],    integration: adminInt, authorizer: cognitoAuthorizer });
+    this.api.addRoutes({ path: '/admin/users/{id}', methods: [apigwv2.HttpMethod.PUT],    integration: adminInt, authorizer: cognitoAuthorizer });
+    this.api.addRoutes({ path: '/admin/users/{id}', methods: [apigwv2.HttpMethod.DELETE], integration: adminInt, authorizer: cognitoAuthorizer });
 
     // Metrics — public (no authorizer)
-    api.addRoutes({ path: '/metrics', methods: [apigwv2.HttpMethod.GET], integration: metricsInt });
+    this.api.addRoutes({ path: '/metrics', methods: [apigwv2.HttpMethod.GET], integration: metricsInt });
 
     // -------------------------------------------------------------------------
     // Access Logging
@@ -267,7 +279,7 @@ export class ApiStack extends cdk.Stack {
     // -------------------------------------------------------------------------
 
     const stage = new apigwv2.HttpStage(this, 'DefaultStage', {
-      httpApi: api,
+      httpApi: this.api,
       stageName: '$default',
       autoDeploy: true,
       throttle: {
@@ -292,12 +304,12 @@ export class ApiStack extends cdk.Stack {
 
     new cdk.CfnOutput(this, 'ApiEndpoint', {
       // The $default stage URL is the same as the execute-api endpoint root.
-      value: api.apiEndpoint,
+      value: this.api.apiEndpoint,
       exportName: `voces-${props.appEnv}-api-endpoint`,
     });
 
     new cdk.CfnOutput(this, 'ApiId', {
-      value: api.apiId,
+      value: this.api.apiId,
       exportName: `voces-${props.appEnv}-api-id`,
     });
   }
