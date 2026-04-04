@@ -1,4 +1,7 @@
 #!/usr/bin/env node
+import * as dotenv from "dotenv";
+dotenv.config(); // loads src/infra/.env if present; no-op otherwise
+
 import * as cdk from "aws-cdk-lib";
 import { DatabaseStack } from "../lib/stacks/database-stack";
 import { AuthStack } from "../lib/stacks/auth-stack";
@@ -6,6 +9,14 @@ import { StorageStack } from "../lib/stacks/storage-stack";
 import { EmailStack } from "../lib/stacks/email-stack";
 import { ApiStack } from "../lib/stacks/api-stack";
 import { MonitoringStack } from "../lib/stacks/monitoring-stack";
+
+// Sensitive values come from environment variables, never from cdk.json.
+// Locally: set these in src/infra/.env (gitignored).
+// CI: AWS_ACCOUNT_ID is a GitHub Actions variable; ALERT_EMAIL is a secret.
+const awsAccountId = process.env.AWS_ACCOUNT_ID;
+if (!awsAccountId) {
+  throw new Error("AWS_ACCOUNT_ID environment variable is required");
+}
 
 const app = new cdk.App();
 
@@ -15,16 +26,14 @@ if (!env || !["dev", "prod"].includes(env)) {
 }
 
 const envConfig = app.node.tryGetContext("environments")[env] as {
-  account: string;
   region: string;
   sesIdentity: string;
   sesFromEmail: string;
   sesVerifiedDomain?: string;
-  alertEmail?: string;
 };
 
 const awsEnv: cdk.Environment = {
-  account: envConfig.account,
+  account: awsAccountId,
   region: envConfig.region,
 };
 
@@ -87,7 +96,9 @@ new MonitoringStack(app, `${stackPrefix}-monitoring`, {
   authStack,
   storageStack,
   apiStack,
-  alertEmail: envConfig.alertEmail,
+  // Prod only. Loaded from ALERT_EMAIL env var — set as a GitHub secret for
+  // the production environment, or in src/infra/.env locally.
+  alertEmail: process.env.ALERT_EMAIL,
 });
 
 app.synth();
