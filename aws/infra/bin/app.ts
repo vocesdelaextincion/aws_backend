@@ -63,6 +63,9 @@ const authStack = new AuthStack(app, `${stackPrefix}-auth`, {
   sesFromEmail: envConfig.sesFromEmail,
   sesVerifiedDomain: envConfig.sesVerifiedDomain,
 });
+// EmailStack must be fully deployed before AuthStack — Cognito validates the SES
+// identity at deploy time. addDependency() tells CloudFormation to enforce this order.
+authStack.addDependency(emailStack);
 
 const apiStack = new ApiStack(app, `${stackPrefix}-api`, {
   env: awsEnv,

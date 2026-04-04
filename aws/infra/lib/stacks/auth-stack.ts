@@ -1,6 +1,7 @@
 import * as cdk from 'aws-cdk-lib';
 import * as cognito from 'aws-cdk-lib/aws-cognito';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
+import * as logs from 'aws-cdk-lib/aws-logs';
 import { Construct } from 'constructs';
 
 export interface AuthStackProps extends cdk.StackProps {
@@ -67,6 +68,7 @@ exports.handler = async function(event) {
       // 128 MB is the minimum and more than enough for pure string operations.
       memorySize: 128,
       timeout: cdk.Duration.seconds(5),
+      logRetention: isProd ? logs.RetentionDays.THREE_MONTHS : logs.RetentionDays.TWO_WEEKS,
     });
 
     // Replaces legacy custom JWT + bcrypt. Cognito handles password hashing,

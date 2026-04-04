@@ -18,13 +18,6 @@ export class EmailStack extends cdk.Stack {
 
     const isProd = props.appEnv === 'prod';
 
-    // Dev: email address identity (sandbox, good for verifying individual addresses).
-    // Prod: domain identity (requires DNS records — DKIM, SPF, DMARC).
-    // CDK creates the identity resource; actual verification is a manual post-deploy step.
-    new ses.CfnEmailIdentity(this, 'SesIdentity', {
-      emailIdentity: props.sesIdentity,
-    });
-
     // CfnEmailIdentity doesn't expose the ARN as an attribute — construct it from parts.
     this.sesIdentityArn = cdk.Stack.of(this).formatArn({
       service: 'ses',
@@ -32,14 +25,28 @@ export class EmailStack extends cdk.Stack {
       resourceName: props.sesIdentity,
     });
 
-    // Production only: configuration set for delivery tracking and suppression list.
-    // Bounce/complaint events flow to CloudWatch so we can monitor sender reputation.
     if (isProd) {
-      new ses.CfnConfigurationSet(this, 'ConfigurationSet', {
+      // Production only: configuration set for delivery tracking and suppression list.
+      // Bounce/complaint events flow to CloudWatch so we can monitor sender reputation.
+      // Created before the identity so we can reference it via configSet.ref below.
+      const configSet = new ses.CfnConfigurationSet(this, 'ConfigurationSet', {
         name: `voces-${props.appEnv}-email`,
         reputationOptions: { reputationMetricsEnabled: true },
         // Automatically suppress addresses that bounce or mark us as spam.
         suppressionOptions: { suppressedReasons: ['BOUNCE', 'COMPLAINT'] },
+      });
+
+      // Prod: domain identity (requires DNS records — DKIM, SPF, DMARC).
+      // CDK creates the identity resource; actual verification is a manual post-deploy step.
+      new ses.CfnEmailIdentity(this, 'SesIdentity', {
+        emailIdentity: props.sesIdentity,
+        // Associate the configuration set so all outbound emails go through it.
+        configurationSetAttributes: { configurationSetName: configSet.ref },
+      });
+    } else {
+      // Dev: email address identity (sandbox, good for verifying individual addresses).
+      new ses.CfnEmailIdentity(this, 'SesIdentity', {
+        emailIdentity: props.sesIdentity,
       });
     }
 

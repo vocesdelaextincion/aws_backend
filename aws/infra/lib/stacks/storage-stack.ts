@@ -58,8 +58,9 @@ export class StorageStack extends cdk.Stack {
       cors: [
         {
           allowedOrigins: corsOrigins,
+          // PUT is required for browser-initiated presigned URL uploads.
           // HEAD allows the frontend to inspect Content-Length for progress bars.
-          allowedMethods: [s3.HttpMethods.GET, s3.HttpMethods.HEAD],
+          allowedMethods: [s3.HttpMethods.GET, s3.HttpMethods.HEAD, s3.HttpMethods.PUT],
           allowedHeaders: ['*'],
           exposedHeaders: ['ETag', 'Content-Length', 'Content-Type'],
           maxAge: 3600,
