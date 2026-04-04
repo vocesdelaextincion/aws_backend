@@ -10,7 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: aws/infra
+        working-directory: src/infra
 
     steps:
       - name: Checkout code
@@ -21,7 +21,7 @@ jobs:
         with:
           node-version: '22'
           cache: 'npm'
-          cache-dependency-path: aws/infra/package-lock.json
+          cache-dependency-path: src/infra/package-lock.json
 
       - name: Install dependencies
         run: npm ci
@@ -40,7 +40,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: aws/lambdas
+        working-directory: src/lambdas
 
     steps:
       - name: Checkout code
@@ -51,7 +51,7 @@ jobs:
         with:
           node-version: '22'
           cache: 'npm'
-          cache-dependency-path: aws/lambdas/package-lock.json
+          cache-dependency-path: src/lambdas/package-lock.json
 
       - name: Install dependencies
         run: npm ci

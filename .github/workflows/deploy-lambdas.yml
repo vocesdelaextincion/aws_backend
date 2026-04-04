@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
     paths:
-      - 'aws/lambdas/**'
+      - 'src/lambdas/**'
       - '.github/workflows/deploy-lambdas.yml'
 
 permissions:
@@ -18,7 +18,7 @@ jobs:
     environment: development
     defaults:
       run:
-        working-directory: aws/lambdas
+        working-directory: src/lambdas
 
     steps:
       - name: Checkout code
@@ -29,7 +29,7 @@ jobs:
         with:
           node-version: '22'
           cache: 'npm'
-          cache-dependency-path: aws/lambdas/package-lock.json
+          cache-dependency-path: src/lambdas/package-lock.json
 
       - name: Install dependencies
         run: npm ci
@@ -47,7 +47,7 @@ jobs:
         run: npm run build
 
       - name: Deploy via CDK (Lambda code update)
-        working-directory: aws/infra
+        working-directory: src/infra
         run: |
           npm ci
           npm run deploy -- voces-dev-api -c env=dev --require-approval never
@@ -59,7 +59,7 @@ jobs:
     needs: deploy-lambdas-dev
     defaults:
       run:
-        working-directory: aws/lambdas
+        working-directory: src/lambdas
 
     steps:
       - name: Checkout code
@@ -70,7 +70,7 @@ jobs:
         with:
           node-version: '22'
           cache: 'npm'
-          cache-dependency-path: aws/lambdas/package-lock.json
+          cache-dependency-path: src/lambdas/package-lock.json
 
       - name: Install dependencies
         run: npm ci
@@ -88,7 +88,7 @@ jobs:
         run: npm run build
 
       - name: Deploy via CDK (Lambda code update)
-        working-directory: aws/infra
+        working-directory: src/infra
         run: |
           npm ci
           npm run deploy -- voces-prod-api -c env=prod --require-approval never

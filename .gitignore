@@ -141,6 +141,9 @@ vite.config.ts.timestamp-*
 # CDK output
 cdk.out/
 
+# Planning docs — local reference only, not part of the codebase
+src/plan/
+
 # TypeScript build output
 dist/
 
