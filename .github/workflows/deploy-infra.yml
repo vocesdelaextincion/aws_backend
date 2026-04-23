@@ -12,45 +12,9 @@ permissions:
   contents: read
 
 jobs:
-  deploy-dev:
-    name: Deploy to Dev
-    runs-on: ubuntu-latest
-    environment: development
-    defaults:
-      run:
-        working-directory: src/infra
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-          cache: 'npm'
-          cache-dependency-path: src/infra/package-lock.json
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Configure AWS credentials (OIDC)
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN_DEV }}
-          aws-region: ${{ vars.AWS_REGION }}
-
-      - name: Deploy CDK stacks (dev)
-        run: npm run deploy -- --all -c env=dev --require-approval never
-        env:
-          AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
-          DEV_CORS_ORIGINS: ${{ vars.DEV_CORS_ORIGINS }}
-
-  deploy-prod:
+  deploy:
     name: Deploy to Prod
     runs-on: ubuntu-latest
-    environment: production
-    needs: deploy-dev
     defaults:
       run:
         working-directory: src/infra
@@ -75,7 +39,7 @@ jobs:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN_PROD }}
           aws-region: ${{ vars.AWS_REGION }}
 
-      - name: Deploy CDK stacks (prod)
+      - name: Deploy CDK stacks
         run: npm run deploy -- --all -c env=prod --require-approval never
         env:
           AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}

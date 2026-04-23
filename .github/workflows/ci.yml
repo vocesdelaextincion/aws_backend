@@ -29,8 +29,8 @@ jobs:
       - name: Type check
         run: npm run typecheck
 
-      - name: Synth CDK app (dev)
-        run: npm run synth -- -c env=dev
+      - name: Synth CDK app
+        run: npm run synth -- -c env=prod
         env:
           AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
           AWS_DEFAULT_REGION: ${{ vars.AWS_REGION }}
