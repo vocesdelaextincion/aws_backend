@@ -44,6 +44,7 @@ jobs:
         run: npm run deploy -- --all -c env=dev --require-approval never
         env:
           AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+          DEV_CORS_ORIGINS: ${{ vars.DEV_CORS_ORIGINS }}
 
   deploy-prod:
     name: Deploy to Prod

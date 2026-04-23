@@ -37,9 +37,17 @@ export class ApiStack extends cdk.Stack {
 
     const isProd = props.appEnv === 'prod';
 
-    const corsOrigins = isProd
+    // Base CORS origins for each environment
+    const baseCorsOrigins = isProd
       ? ['https://vocesdelaextincion.com', 'https://www.vocesdelaextincion.com']
       : ['http://localhost:3000', 'http://localhost:5173'];
+
+    // Allow additional origins via environment variable (useful for Vercel previews, staging, etc.)
+    const additionalOrigins = process.env.DEV_CORS_ORIGINS
+      ? process.env.DEV_CORS_ORIGINS.split(',').map(url => url.trim())
+      : [];
+
+    const corsOrigins = isProd ? baseCorsOrigins : [...baseCorsOrigins, ...additionalOrigins];
 
     // -------------------------------------------------------------------------
     // Lambda Functions (one per route group)
@@ -293,6 +301,17 @@ export class ApiStack extends cdk.Stack {
     const cfnStage = stage.node.defaultChild as apigwv2.CfnStage;
     cfnStage.addPropertyOverride('AccessLogSettings', {
       DestinationArn: accessLogGroup.logGroupArn,
+      Format: JSON.stringify({
+        requestId: '$context.requestId',
+        ip: '$context.identity.sourceIp',
+        requestTime: '$context.requestTime',
+        httpMethod: '$context.httpMethod',
+        routeKey: '$context.routeKey',
+        status: '$context.status',
+        protocol: '$context.protocol',
+        responseLength: '$context.responseLength',
+        integrationError: '$context.integrationErrorMessage',
+      }),
     });
 
     // API Gateway needs permission to create and write to the log delivery stream.
