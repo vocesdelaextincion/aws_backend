@@ -15,6 +15,7 @@ jobs:
   deploy:
     name: Deploy Lambda Code to Prod
     runs-on: ubuntu-latest
+    environment: production
     defaults:
       run:
         working-directory: src/lambdas
