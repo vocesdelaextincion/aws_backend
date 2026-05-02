@@ -111,6 +111,7 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
   try {
     if (method === 'GET' && path === '/recordings') return await listRecordings(event);
     if (method === 'POST' && path === '/recordings') return await createRecording(event);
+    if (method === 'POST' && path === '/recordings/upload-url') return await getUploadUrl(event);
     if (method === 'POST' && path === '/recordings/download') return await download(event);
     if (method === 'POST' && path === '/recordings/download-all') return await downloadAll(event);
     if (method === 'GET' && /^\/recordings\/[\w-]+$/.test(path)) return await getRecording(event, path);
@@ -121,6 +122,26 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
     console.error('Unhandled error in recordings handler:', err);
     return internalError();
   }
+}
+
+async function getUploadUrl(event: APIGatewayProxyEventV2): Promise<APIGatewayProxyResultV2> {
+  const user = getClaims(event);
+  if (user.role !== 'ADMIN') return forbidden('Admin access required');
+
+  let body: { fileName?: string; contentType?: string };
+  try { body = JSON.parse(event.body ?? '{}'); } catch { return badRequest('Invalid JSON'); }
+
+  const ext = extname(body.fileName ?? '') || '.mp3';
+  const fileKey = `${randomUUID()}${ext}`;
+  const contentType = body.contentType || 'application/octet-stream';
+
+  const uploadUrl = await getSignedUrl(
+    s3,
+    new PutObjectCommand({ Bucket: BUCKET, Key: fileKey, ContentType: contentType }),
+    { expiresIn: 300 },
+  );
+
+  return ok({ uploadUrl, fileKey });
 }
 
 async function listRecordings(event: APIGatewayProxyEventV2): Promise<APIGatewayProxyResultV2> {
@@ -322,6 +343,10 @@ async function updateRecording(event: APIGatewayProxyEventV2, path: string): Pro
     tagsRaw = typeof body.tags !== 'undefined' ? (typeof body.tags === 'string' ? body.tags : JSON.stringify(body.tags)) : undefined;
     metadataRaw = typeof body.metadata !== 'undefined' ? (typeof body.metadata === 'string' ? body.metadata : JSON.stringify(body.metadata)) : undefined;
     isFreeRaw = typeof body.isFree !== 'undefined' ? String(body.isFree) : undefined;
+    if (body.fileKey && typeof body.fileKey === 'string') {
+      newFileKey = body.fileKey;
+      await s3.send(new DeleteObjectCommand({ Bucket: BUCKET, Key: existing.Item.fileKey as string })).catch(() => {});
+    }
   }
 
   const now = new Date().toISOString();

@@ -250,6 +250,7 @@ export class ApiStack extends cdk.Stack {
     // Recordings — all protected; admin enforcement happens inside the Lambda
     this.api.addRoutes({ path: '/recordings',              methods: [apigwv2.HttpMethod.GET],    integration: recordingsInt, authorizer: cognitoAuthorizer });
     this.api.addRoutes({ path: '/recordings',              methods: [apigwv2.HttpMethod.POST],   integration: recordingsInt, authorizer: cognitoAuthorizer });
+    this.api.addRoutes({ path: '/recordings/upload-url',   methods: [apigwv2.HttpMethod.POST],   integration: recordingsInt, authorizer: cognitoAuthorizer });
     this.api.addRoutes({ path: '/recordings/download',     methods: [apigwv2.HttpMethod.POST],   integration: recordingsInt, authorizer: cognitoAuthorizer });
     this.api.addRoutes({ path: '/recordings/download-all', methods: [apigwv2.HttpMethod.POST],   integration: recordingsInt, authorizer: cognitoAuthorizer });
     this.api.addRoutes({ path: '/recordings/{id}',         methods: [apigwv2.HttpMethod.GET],    integration: recordingsInt, authorizer: cognitoAuthorizer });
