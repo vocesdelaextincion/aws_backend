@@ -165,8 +165,9 @@ export class MonitoringStack extends cdk.Stack {
     new cloudwatch.Alarm(this, 'DdbSystemErrors', {
       alarmName: `voces-${props.appEnv}-ddb-system-errors`,
       alarmDescription: 'DynamoDB system errors detected',
-      metric: props.databaseStack.table.metricSystemErrorsForOperations({
+      metric: props.databaseStack.table.metricUserErrors({
         period: cdk.Duration.minutes(5),
+        statistic: 'Sum',
       }),
       threshold: 0,
       evaluationPeriods: 1,
@@ -177,8 +178,9 @@ export class MonitoringStack extends cdk.Stack {
     new cloudwatch.Alarm(this, 'DdbThrottles', {
       alarmName: `voces-${props.appEnv}-ddb-throttles`,
       alarmDescription: 'DynamoDB throttled requests detected',
-      metric: props.databaseStack.table.metricThrottledRequestsForOperations({
+      metric: props.databaseStack.table.metricThrottledRequests({
         period: cdk.Duration.minutes(5),
+        statistic: 'Sum',
       }),
       threshold: 0,
       evaluationPeriods: 1,
@@ -258,7 +260,7 @@ export class MonitoringStack extends cdk.Stack {
         title: 'DynamoDB — Throttled Requests',
         width: 12,
         left: [
-          props.databaseStack.table.metricThrottledRequestsForOperations({ period: cdk.Duration.minutes(5) }),
+          props.databaseStack.table.metricThrottledRequests({ period: cdk.Duration.minutes(5), statistic: 'Sum' }),
         ],
       }),
     );
