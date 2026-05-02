@@ -6,11 +6,10 @@ import { Construct } from 'constructs';
 
 export interface AuthStackProps extends cdk.StackProps {
   appEnv: string;
-  // The FROM address Cognito uses when sending via SES.
-  // Must match (or belong to) the verified SES identity.
-  sesFromEmail: string;
-  // Set only for domain identities (prod). Tells Cognito the domain was verified
-  // at the domain level rather than as a single address.
+  // When set, Cognito routes emails through SES using this address.
+  // The identity must be verified in SES first.
+  // When omitted, Cognito uses its built-in sender (50 emails/day limit).
+  sesFromEmail?: string;
   sesVerifiedDomain?: string;
 }
 
@@ -112,18 +111,18 @@ exports.handler = async function(event) {
         emailBody: 'Your verification code is {####}. It expires in 24 hours.',
       },
 
-      // Route Cognito emails through SES. This removes the default 50 emails/day limit
-      // and lets us send from our own domain. The identity must be verified in SES
-      // before Cognito can use it (manual step — see plan/09-MANUAL-AWS-SETUP.md).
-      email: cognito.UserPoolEmail.withSES({
-        fromEmail: props.sesFromEmail,
-        fromName: 'Voces de la Extinción',
-        replyTo: props.sesFromEmail,
-        // Required for domain identities (prod). Omit for email address identities (dev).
-        sesVerifiedDomain: props.sesVerifiedDomain,
-        // SES must be in the same region as the User Pool.
-        sesRegion: cdk.Stack.of(this).region,
-      }),
+      // Use SES when a verified identity is available; fall back to Cognito's
+      // built-in sender (50 emails/day) otherwise. Switch to SES once the domain
+      // is owned and verified in SES (see plan/09-MANUAL-AWS-SETUP.md).
+      email: props.sesFromEmail
+        ? cognito.UserPoolEmail.withSES({
+            fromEmail: props.sesFromEmail,
+            fromName: 'Voces de la Extinción',
+            replyTo: props.sesFromEmail,
+            sesVerifiedDomain: props.sesVerifiedDomain,
+            sesRegion: cdk.Stack.of(this).region,
+          })
+        : cognito.UserPoolEmail.withCognito(),
 
       // Branded HTML emails via the Custom Message Lambda trigger.
       lambdaTriggers: {

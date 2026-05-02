@@ -27,8 +27,8 @@ if (!env || !["dev", "prod"].includes(env)) {
 
 const envConfig = app.node.tryGetContext("environments")[env] as {
   region: string;
-  sesIdentity: string;
-  sesFromEmail: string;
+  sesIdentity?: string;
+  sesFromEmail?: string;
   sesVerifiedDomain?: string;
 };
 
@@ -72,9 +72,10 @@ const authStack = new AuthStack(app, `${stackPrefix}-auth`, {
   sesFromEmail: envConfig.sesFromEmail,
   sesVerifiedDomain: envConfig.sesVerifiedDomain,
 });
-// EmailStack must be fully deployed before AuthStack — Cognito validates the SES
-// identity at deploy time. addDependency() tells CloudFormation to enforce this order.
-authStack.addDependency(emailStack);
+// Only enforce deploy order when SES is actually in use.
+if (envConfig.sesFromEmail) {
+  authStack.addDependency(emailStack);
+}
 
 const apiStack = new ApiStack(app, `${stackPrefix}-api`, {
   env: awsEnv,

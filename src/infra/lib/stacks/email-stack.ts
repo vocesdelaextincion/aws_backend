@@ -6,7 +6,7 @@ export interface EmailStackProps extends cdk.StackProps {
   appEnv: string;
   // The email address (dev) or domain (prod) to register as an SES identity.
   // Must be manually verified after first deploy — see plan/09-MANUAL-AWS-SETUP.md.
-  sesIdentity: string;
+  sesIdentity?: string;
 }
 
 export class EmailStack extends cdk.Stack {
@@ -19,11 +19,11 @@ export class EmailStack extends cdk.Stack {
     const isProd = props.appEnv === 'prod';
 
     // CfnEmailIdentity doesn't expose the ARN as an attribute — construct it from parts.
-    this.sesIdentityArn = cdk.Stack.of(this).formatArn({
-      service: 'ses',
-      resource: 'identity',
-      resourceName: props.sesIdentity,
-    });
+    this.sesIdentityArn = props.sesIdentity
+      ? cdk.Stack.of(this).formatArn({ service: 'ses', resource: 'identity', resourceName: props.sesIdentity })
+      : '';
+
+    if (!props.sesIdentity) return; // No SES identity configured; stack is a no-op.
 
     if (isProd) {
       // Production only: configuration set for delivery tracking and suppression list.

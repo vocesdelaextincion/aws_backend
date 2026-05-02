@@ -41,15 +41,10 @@
     "@aws-cdk/aws-ec2:rdpRuleDescription": true,
     "environments": {
       "dev": {
-        "region": "us-east-1",
-        "sesIdentity": "noreply@vocesdelaextincion.com",
-        "sesFromEmail": "noreply@vocesdelaextincion.com"
+        "region": "us-east-1"
       },
       "prod": {
-        "region": "us-east-1",
-        "sesIdentity": "vocesdelaextincion.com",
-        "sesFromEmail": "noreply@vocesdelaextincion.com",
-        "sesVerifiedDomain": "vocesdelaextincion.com"
+        "region": "us-east-1"
       }
     }
   }
