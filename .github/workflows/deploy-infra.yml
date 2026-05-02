@@ -34,6 +34,10 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Install Lambda dependencies
+        working-directory: src/lambdas
+        run: npm ci
+
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
