@@ -6,6 +6,7 @@ on:
     paths:
       - 'src/lambdas/**'
       - '.github/workflows/deploy-lambdas.yml'
+  workflow_dispatch:
 
 permissions:
   id-token: write

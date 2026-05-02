@@ -6,6 +6,7 @@ on:
     paths:
       - 'src/infra/**'
       - '.github/workflows/deploy-infra.yml'
+  workflow_dispatch:
 
 permissions:
   id-token: write
